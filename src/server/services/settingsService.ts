@@ -212,19 +212,38 @@ export type SettingMeta = {
 export async function listSettingsMeta(keys: string[]): Promise<SettingMeta[]> {
   const out: SettingMeta[] = [];
   for (const key of keys) {
-    const { value, source } = await getSetting(key);
-    out.push({
-      key,
-      isSecret: true,
-      hasValue: value !== null && value.length > 0,
-      maskedValue: value ? maskSecret(value) : '',
-      source,
-      description: null,
-      lastValidatedAt: null,
-      lastValidationStatus: null,
-      updatedBy: null,
-      updatedAt: null,
-    });
+    // Per-key try/catch so one bad row (e.g. corrupted ciphertext) doesn't
+    // blow up the whole Settings page. The UI shows the failure as 'env fallback'
+    // or 'empty' and admin can re-save the affected key in isolation.
+    try {
+      const { value, source } = await getSetting(key);
+      out.push({
+        key,
+        isSecret: true,
+        hasValue: value !== null && value.length > 0,
+        maskedValue: value ? maskSecret(value) : '',
+        source,
+        description: null,
+        lastValidatedAt: null,
+        lastValidationStatus: null,
+        updatedBy: null,
+        updatedAt: null,
+      });
+    } catch (err) {
+      logger.error({ key, err: err instanceof Error ? err.message : String(err) }, 'settings_per_key_failed');
+      out.push({
+        key,
+        isSecret: true,
+        hasValue: false,
+        maskedValue: '',
+        source: 'empty',
+        description: err instanceof Error ? err.message : 'read failed',
+        lastValidatedAt: null,
+        lastValidationStatus: 'error',
+        updatedBy: null,
+        updatedAt: null,
+      });
+    }
   }
   return out;
 }

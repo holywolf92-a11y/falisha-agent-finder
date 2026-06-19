@@ -25,8 +25,12 @@ settingsRouter.get('/', async (_req, res) => {
     const items = await listSettingsMeta([...SETTING_KEYS]);
     return res.json({ settings: items });
   } catch (err) {
-    logger.error({ err: err instanceof Error ? err.message : String(err) }, 'settings_list_failed');
-    return res.status(500).json({ error: 'settings_list_failed' });
+    const msg = err instanceof Error ? err.message : String(err);
+    // Surface the real error both in pino's msg field AND in stderr so Railway's
+    // log API (which sometimes drops structured fields) catches at least one.
+    logger.error({ stack: err instanceof Error ? err.stack : undefined }, `settings_list_failed: ${msg}`);
+    console.error('[settings_list_failed]', msg, err instanceof Error ? err.stack : '');
+    return res.status(500).json({ error: 'settings_list_failed', detail: msg });
   }
 });
 
