@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { env, isProduction } from './env.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
+import { settingsRouter } from './routes/settings.js';
+import { sweepsRouter } from './routes/sweeps.js';
+import { agenciesRouter } from './routes/agencies.js';
+import { startSettingsListener } from './services/settingsService.js';
 import { logger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,8 +38,15 @@ app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 
 // ─── API routes ────────────────────────────────────────────────────────────
-app.use('/api/health', healthRouter);
-app.use('/api/auth',   authRouter);
+app.use('/api/health',   healthRouter);
+app.use('/api/auth',     authRouter);
+app.use('/api/settings', settingsRouter);
+app.use('/api/sweeps',   sweepsRouter);
+app.use('/api/agencies', agenciesRouter);
+
+// Fire-and-forget: start the Supabase realtime listener for cross-process
+// settings invalidation. Non-fatal if it fails (settings still work via TTL).
+void startSettingsListener();
 
 // ─── SPA static serving (production only — dev uses Vite's own server) ─────
 if (isProduction) {
