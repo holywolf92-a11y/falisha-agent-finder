@@ -6,11 +6,30 @@
 -- All tables are service-role-only (RLS enabled, no policies).
 -- ============================================================================
 
+-- ── Safety notes (read me) ──────────────────────────────────────────────────
+-- This migration is designed to run alongside the existing Falisha portal
+-- schema WITHOUT touching anything that already exists:
+--
+--   • All CREATE TABLE statements use `IF NOT EXISTS`.
+--   • All CREATE INDEX statements use `IF NOT EXISTS`.
+--   • The shared trigger function is NAMESPACED as `agent_finder_set_updated_at()`
+--     so it cannot replace the portal's pre-existing `set_updated_at()` used by
+--     migration 031_create_whatsapp_inbox_tables.sql.
+--   • Extensions use `IF NOT EXISTS` and only enable common ones (pgcrypto +
+--     pg_trgm) — both are already used by the portal, so this is a no-op there.
+--   • All RLS policies are restrictive (service-role only) — no public reads.
+--   • No DROPs, no ALTERs to existing tables.
+--   • No CREATE OR REPLACE on shared functions or triggers.
+--
+-- Safe to apply via Supabase SQL Editor on the existing project.
+-- ────────────────────────────────────────────────────────────────────────────
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Shared updated_at trigger function ─────────────────────────────────────────
-CREATE OR REPLACE FUNCTION set_updated_at()
+-- Shared updated_at trigger function — namespaced to avoid collision with the
+-- portal's existing set_updated_at() in the public schema.
+CREATE OR REPLACE FUNCTION agent_finder_set_updated_at()
 RETURNS trigger AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
@@ -74,8 +93,8 @@ CREATE INDEX IF NOT EXISTS agencies_last_sweep_idx    ON agencies (last_sweep_at
 CREATE INDEX IF NOT EXISTS agencies_alive_idx         ON agencies (id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS agencies_name_trgm_idx     ON agencies USING gin (lower(name) gin_trgm_ops);
 
-CREATE TRIGGER agencies_set_updated_at
-  BEFORE UPDATE ON agencies FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER agencies_agent_finder_set_updated_at
+  BEFORE UPDATE ON agencies FOR EACH ROW EXECUTE FUNCTION agent_finder_set_updated_at();
 
 -- ============================================================================
 -- agency_emails — 1:N
@@ -98,8 +117,8 @@ CREATE TABLE IF NOT EXISTS agency_emails (
 CREATE INDEX IF NOT EXISTS agency_emails_agency_idx ON agency_emails (agency_id);
 CREATE INDEX IF NOT EXISTS agency_emails_email_idx  ON agency_emails (email_normalized);
 
-CREATE TRIGGER agency_emails_set_updated_at
-  BEFORE UPDATE ON agency_emails FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER agency_emails_agent_finder_set_updated_at
+  BEFORE UPDATE ON agency_emails FOR EACH ROW EXECUTE FUNCTION agent_finder_set_updated_at();
 
 -- ============================================================================
 -- agency_phones — 1:N
@@ -121,8 +140,8 @@ CREATE TABLE IF NOT EXISTS agency_phones (
 
 CREATE INDEX IF NOT EXISTS agency_phones_agency_idx ON agency_phones (agency_id);
 
-CREATE TRIGGER agency_phones_set_updated_at
-  BEFORE UPDATE ON agency_phones FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER agency_phones_agent_finder_set_updated_at
+  BEFORE UPDATE ON agency_phones FOR EACH ROW EXECUTE FUNCTION agent_finder_set_updated_at();
 
 -- ============================================================================
 -- agency_socials — 1:N
@@ -185,8 +204,8 @@ CREATE TABLE IF NOT EXISTS sweeps (
 CREATE INDEX IF NOT EXISTS sweeps_status_idx     ON sweeps (status);
 CREATE INDEX IF NOT EXISTS sweeps_created_idx    ON sweeps (created_at DESC);
 
-CREATE TRIGGER sweeps_set_updated_at
-  BEFORE UPDATE ON sweeps FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER sweeps_agent_finder_set_updated_at
+  BEFORE UPDATE ON sweeps FOR EACH ROW EXECUTE FUNCTION agent_finder_set_updated_at();
 
 -- ============================================================================
 -- sweep_queries — per-query audit log inside a sweep
@@ -263,8 +282,8 @@ CREATE INDEX IF NOT EXISTS agency_outreach_sent_idx       ON agency_outreach (se
 CREATE INDEX IF NOT EXISTS agency_outreach_provider_msg_idx
   ON agency_outreach (provider, provider_message_id) WHERE provider_message_id IS NOT NULL;
 
-CREATE TRIGGER agency_outreach_set_updated_at
-  BEFORE UPDATE ON agency_outreach FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER agency_outreach_agent_finder_set_updated_at
+  BEFORE UPDATE ON agency_outreach FOR EACH ROW EXECUTE FUNCTION agent_finder_set_updated_at();
 
 -- ============================================================================
 -- app_settings — encrypted runtime config / API keys (AES-256-GCM)
@@ -287,8 +306,8 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TRIGGER app_settings_set_updated_at
-  BEFORE UPDATE ON app_settings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER app_settings_agent_finder_set_updated_at
+  BEFORE UPDATE ON app_settings FOR EACH ROW EXECUTE FUNCTION agent_finder_set_updated_at();
 
 -- ============================================================================
 -- app_settings_audit — every change logged with HMAC of values, not raw
