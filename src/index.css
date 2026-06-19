@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Falisha Agent Finder — design tokens
+   Brand: deep teal #0F766E (light) / #14B8A6 (dark)
+   Dark primary, light optional. WCAG AA passes for body text on both.
+   --------------------------------------------------------------------------- */
+@layer base {
+  :root {
+    /* Light theme tokens (kept polished but not the default mode) */
+    --background:           0 0% 100%;
+    --foreground:           220 25% 12%;
+    --card:                 0 0% 100%;
+    --card-foreground:      220 25% 12%;
+    --popover:              0 0% 100%;
+    --popover-foreground:   220 25% 12%;
+
+    --primary:              173 80% 26%;   /* #0F766E deep teal */
+    --primary-foreground:   0 0% 100%;
+    --secondary:            210 40% 96%;
+    --secondary-foreground: 220 25% 12%;
+    --muted:                210 40% 96%;
+    --muted-foreground:     215 15% 45%;
+    --accent:               173 80% 26%;
+    --accent-foreground:    0 0% 100%;
+    --destructive:          0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success:              160 84% 39%;
+    --success-foreground:   0 0% 100%;
+    --warning:              38 92% 50%;
+    --warning-foreground:   0 0% 100%;
+
+    --border:               220 15% 90%;
+    --input:                220 15% 90%;
+    --ring:                 173 80% 26%;
+
+    --sidebar:              0 0% 100%;
+    --sidebar-foreground:   220 25% 12%;
+    --sidebar-border:       220 15% 90%;
+
+    --radius: 0.6rem;
+  }
+
+  .dark {
+    /* Dark theme tokens — the daily-driver mode for this tool */
+    --background:           180 10% 6%;    /* near-black with a teal tint */
+    --foreground:           210 17% 95%;
+    --card:                 180 10% 8%;
+    --card-foreground:      210 17% 95%;
+    --popover:              180 10% 9%;
+    --popover-foreground:   210 17% 95%;
+
+    --primary:              172 66% 50%;   /* #14B8A6 brighter teal for dark */
+    --primary-foreground:   180 10% 6%;
+    --secondary:            180 10% 12%;
+    --secondary-foreground: 210 17% 95%;
+    --muted:                180 10% 12%;
+    --muted-foreground:     215 10% 65%;
+    --accent:               172 66% 50%;
+    --accent-foreground:    180 10% 6%;
+    --destructive:          0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success:              160 70% 45%;
+    --success-foreground:   180 10% 6%;
+    --warning:              38 92% 55%;
+    --warning-foreground:   180 10% 6%;
+
+    --border:               180 8% 16%;
+    --input:                180 8% 16%;
+    --ring:                 172 66% 50%;
+
+    --sidebar:              180 10% 8%;
+    --sidebar-foreground:   210 17% 95%;
+    --sidebar-border:       180 8% 16%;
+  }
+
+  * { @apply border-border; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: 'rlig' 1, 'calt' 1, 'ss01' 1;
+  }
+  /* Tabular numbers on tables (aligns phone numbers, counts, currency) */
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* Keyboard hint chip used in command palette hints */
+  kbd {
+    @apply inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5
+           text-[10px] font-mono font-medium rounded
+           border border-border bg-muted text-muted-foreground;
+  }
+}
