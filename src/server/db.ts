@@ -1,3 +1,13 @@
+// Node 20 ships without a native global WebSocket. Supabase's realtime client
+// (used implicitly by createClient even when we never subscribe) checks for
+// globalThis.WebSocket and throws on every operation if it isn't there. Polyfill
+// with the `ws` package BEFORE importing @supabase/supabase-js so the realtime
+// client picks it up at construction time.
+import WebSocket from 'ws';
+if (typeof (globalThis as unknown as { WebSocket?: unknown }).WebSocket === 'undefined') {
+  (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = WebSocket;
+}
+
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { env } from './env.js';
 
