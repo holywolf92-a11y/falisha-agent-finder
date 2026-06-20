@@ -7,30 +7,44 @@ export const agenciesRouter = Router();
 agenciesRouter.use(requireAdmin);
 
 const querySchema = z.object({
-  q:        z.string().optional(),
-  country:  z.string().optional(),
-  category: z.string().optional(),
-  page:     z.coerce.number().int().min(0).default(0),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  q:                z.string().optional(),
+  country:          z.string().optional(),
+  category:         z.string().optional(),
+  minRating:        z.coerce.number().min(0).max(5).optional(),
+  minReviews:       z.coerce.number().int().min(0).optional(),
+  enrichmentStatus: z.enum(['not_enriched', 'enriched', 'failed', 'in_progress']).optional(),
+  page:             z.coerce.number().int().min(0).default(0),
+  pageSize:         z.coerce.number().int().min(1).max(200).default(50),
 });
 
 agenciesRouter.get('/', async (req, res) => {
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_query' });
-  const { q, country, category, page, pageSize } = parsed.data;
+  const { q, country, category, minRating, minReviews, enrichmentStatus, page, pageSize } = parsed.data;
 
+  // Embed first phones inline so the Agencies table can show contact info
+  // without one extra round-trip per row. Supabase resource embedding does the
+  // JOIN server-side; the response shape is `{ ..., agency_phones: [...] }`.
   let qb = db()
     .from('agencies')
     .select(
-      'id, name, country_code, city, address, category, website, rating, review_count, business_status, enrichment_status, last_sweep_at',
+      `id, name, country_code, city, address, category, website,
+       rating, review_count, business_status, enrichment_status, last_sweep_at,
+       agency_phones (phone, phone_type)`,
       { count: 'exact' },
     )
     .is('deleted_at', null)
-    .order('rating', { ascending: false, nullsFirst: false })
+    // Sort by rating then review_count so a 4.5★ × 200-review agency outranks
+    // a 5★ × 1-review (vanity) listing. This is the priority order admins want.
+    .order('rating',       { ascending: false, nullsFirst: false })
+    .order('review_count', { ascending: false })
     .range(page * pageSize, page * pageSize + pageSize - 1);
 
-  if (country)  qb = qb.eq('country_code', country.toLowerCase());
-  if (category) qb = qb.eq('category', category);
+  if (country)          qb = qb.eq('country_code', country.toLowerCase());
+  if (category)         qb = qb.eq('category', category);
+  if (enrichmentStatus) qb = qb.eq('enrichment_status', enrichmentStatus);
+  if (minRating != null) qb = qb.gte('rating', minRating);
+  if (minReviews != null) qb = qb.gte('review_count', minReviews);
   if (q && q.trim()) {
     const term = q.trim().replace(/[%,()]/g, ' ');
     qb = qb.or(`name.ilike.%${term}%,address.ilike.%${term}%`);

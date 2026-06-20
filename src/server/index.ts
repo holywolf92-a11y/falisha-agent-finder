@@ -10,6 +10,10 @@ import { healthRouter } from './routes/health.js';
 import { settingsRouter } from './routes/settings.js';
 import { sweepsRouter } from './routes/sweeps.js';
 import { agenciesRouter } from './routes/agencies.js';
+import { enrichRouter } from './routes/enrich.js';
+import { quotaRouter } from './routes/quota.js';
+import { dashboardRouter } from './routes/dashboard.js';
+import { scrapeRouter } from './routes/scrape.js';
 import { startSettingsListener } from './services/settingsService.js';
 import { logger } from './logger.js';
 
@@ -43,6 +47,10 @@ app.use('/api/auth',     authRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/sweeps',   sweepsRouter);
 app.use('/api/agencies', agenciesRouter);
+app.use('/api/enrich',   enrichRouter);
+app.use('/api/quota',    quotaRouter);
+app.use('/api/dashboard', dashboardRouter);
+app.use('/api/scrape',   scrapeRouter);
 
 // Fire-and-forget: start the Supabase realtime listener for cross-process
 // settings invalidation. Non-fatal if it fails (settings still work via TTL).

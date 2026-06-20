@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -10,11 +10,24 @@ import { AgencyDrawer } from '@/components/app/AgencyDrawer';
 import { QuotaWidget, refreshQuota, useQuota } from '@/components/app/QuotaWidget';
 import {
   Building2, Search, Star, ChevronLeft, ChevronRight, Sparkles, Loader2, Filter,
-  Phone as PhoneIcon, MessageSquare, Globe, Mail,
+  Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { bestPhone, whatsAppHref, telHref, fmtPhone, type AgencyPhone } from '@/lib/phone';
+
+// Server returns this shape from GET /scrape/status — mirror of ScrapeRunState
+type ScrapeRunState = {
+  active: boolean;
+  total: number;
+  done: number;
+  ok: number;
+  noData: number;
+  failed: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  totals: { emails: number; phones: number; whatsapp: number; socials: number };
+};
 
 type Agency = {
   id: string;
@@ -79,6 +92,10 @@ export function AgenciesPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [scraping, setScraping] = useState(false);
   const [scrapeConfirmOpen, setScrapeConfirmOpen] = useState(false);
+  const [scrapeState, setScrapeState] = useState<ScrapeRunState | null>(null);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const scrapeStateRef = useRef<ScrapeRunState | null>(null);
   const quotas = useQuota();
 
   useEffect(() => {
@@ -104,7 +121,70 @@ export function AgenciesPage() {
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [debounced, country, minRating, minReviews, enrichmentStatus, page]);
+  }, [debounced, country, minRating, minReviews, enrichmentStatus, page, refreshNonce]);
+
+  // ─── Auto-scrape orchestration ─────────────────────────────────────────────
+  // On mount, peek scrape status. If a run is active, poll its progress and
+  // refresh the table when it ends. If nothing is running but there ARE
+  // un-scraped agencies with websites, kick off a background run. Idempotency
+  // is enforced by the server's atomic guard — no client-side sessionStorage
+  // flag (which would block resuming after a server crash mid-run).
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastTriggerAt = 0; // throttle re-trigger so a transient failure can't loop
+
+    async function tick() {
+      if (cancelled) return;
+      try {
+        const r = await api.get<{ state: ScrapeRunState; pending: number | null }>('/scrape/status');
+        if (cancelled) return;
+        const prev = scrapeStateRef.current;
+        let effectiveState = r.state;
+
+        // Auto-trigger when idle + something pending. Server-side startAutoScrape
+        // is atomic-idempotent so we don't need a client guard against re-entry.
+        const shouldTrigger =
+          !r.state.active && (r.pending ?? 0) > 0 && Date.now() - lastTriggerAt > 10_000;
+        if (shouldTrigger) {
+          lastTriggerAt = Date.now();
+          try {
+            const started = await api.post<{ state: ScrapeRunState }>('/scrape/auto', {});
+            if (cancelled) return;
+            effectiveState = started.state;
+            if (started.state.total > 0) {
+              toast.info(`Auto-scraping ${started.state.total} agency websites in the background.`);
+            }
+          } catch (e) {
+            toast.error(`Auto-scrape failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+          }
+        }
+
+        scrapeStateRef.current = effectiveState;
+        setScrapeState(effectiveState);
+        setPendingCount(r.pending);
+
+        // Run just finished — refresh the visible table + summary toast.
+        if (prev?.active && !effectiveState.active) {
+          setRefreshNonce((n) => n + 1);
+          toast.success(
+            `Scrape complete · ${effectiveState.ok} ok · ${effectiveState.noData} no-data · ${effectiveState.failed} failed · pulled ${effectiveState.totals.emails} emails, ${effectiveState.totals.socials} socials, ${effectiveState.totals.phones + effectiveState.totals.whatsapp} phones`,
+          );
+        }
+
+        // Continue polling — fast while active (or freshly-started), slow when idle.
+        timer = setTimeout(tick, effectiveState.active ? 6000 : 30_000);
+      } catch {
+        // Network blip — try again less aggressively. Don't toast (poll noise).
+        if (!cancelled) timer = setTimeout(tick, 20_000);
+      }
+    }
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const startRow = total === 0 ? 0 : page * pageSize + 1;
@@ -135,9 +215,15 @@ export function AgenciesPage() {
       toast.success(
         `Scraped ${s.attempted}: ${s.ok} ok, ${s.noData} no data, ${s.failed} failed · pulled ${s.totals.emails} emails, ${s.totals.phones + s.totals.whatsapp} phones, ${s.totals.socials} socials`
       );
-      setPage(0);
+      setRefreshNonce((n) => n + 1);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Scrape failed');
+      const msg = e instanceof Error ? e.message : 'Scrape failed';
+      // Server returns 409 when an auto-scrape is already in flight
+      if (msg.includes('auto_scrape_in_progress')) {
+        toast.info('Auto-scrape is already running — wait for it to finish, then try again.');
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setScraping(false);
     }
@@ -181,9 +267,13 @@ export function AgenciesPage() {
         <div className="flex items-center gap-2">
           <Button
             onClick={() => setScrapeConfirmOpen(true)}
-            disabled={scraping || total === 0}
+            disabled={scraping || total === 0 || !!scrapeState?.active}
             variant="outline"
-            title="Scrape agency websites for emails, phones, WhatsApp + social links (free, no API cost)"
+            title={
+              scrapeState?.active
+                ? 'Auto-scrape already running — wait for it to finish'
+                : 'Scrape agency websites for emails, phones, WhatsApp + social links (free, no API cost)'
+            }
           >
             {scraping
               ? <><Loader2 className="h-4 w-4 animate-spin" /> Scraping…</>
@@ -200,6 +290,9 @@ export function AgenciesPage() {
           </Button>
         </div>
       </div>
+
+      {/* Auto-scrape progress banner */}
+      <AutoScrapeBanner state={scrapeState} pending={pendingCount} />
 
       {/* Quota widget */}
       <QuotaWidget />
@@ -384,6 +477,68 @@ export function AgenciesPage() {
       </Dialog>
     </div>
   );
+}
+
+function AutoScrapeBanner({ state, pending }: { state: ScrapeRunState | null; pending: number | null }) {
+  if (!state) return null;
+
+  // Active run — show progress bar + counters
+  if (state.active) {
+    const pct = state.total > 0 ? Math.min(100, Math.round((state.done / state.total) * 100)) : 0;
+    return (
+      <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-[12.5px]">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span className="font-medium text-foreground">Auto-scraping websites</span>
+            <span className="text-muted-foreground tabular">
+              · {state.done.toLocaleString()} / {state.total.toLocaleString()} done ({pct}%)
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-muted-foreground tabular">
+            <span><Mail className="h-3 w-3 inline -mt-px" /> {state.totals.emails}</span>
+            <span><PhoneIcon className="h-3 w-3 inline -mt-px" /> {state.totals.phones + state.totals.whatsapp}</span>
+            <span><Globe className="h-3 w-3 inline -mt-px" /> {state.totals.socials}</span>
+            <span className="text-success">✓ {state.ok}</span>
+            {state.failed > 0 && <span className="text-destructive">✗ {state.failed}</span>}
+          </div>
+        </div>
+        <div className="mt-2 h-1 rounded-full bg-muted overflow-hidden">
+          <div className="h-full bg-primary transition-[width] duration-500" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+
+  // Idle but something is pending — first poll caught it before auto-trigger fired.
+  if ((pending ?? 0) > 0) {
+    return (
+      <div className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-[12.5px] text-muted-foreground flex items-center gap-2">
+        <Globe className="h-3.5 w-3.5" />
+        <span><strong className="text-foreground tabular">{pending}</strong> agencies with websites haven't been scraped yet — kicking off shortly…</span>
+      </div>
+    );
+  }
+
+  // Idle, nothing pending, but we recently finished — show a brief success line.
+  if (state.finishedAt && (state.ok + state.noData + state.failed) > 0) {
+    const ageMs = Date.now() - new Date(state.finishedAt).getTime();
+    if (ageMs < 60_000) {
+      return (
+        <div className="rounded-lg border border-success/30 bg-success/5 px-4 py-2 text-[12.5px] text-foreground flex items-center gap-2">
+          <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+          <span>
+            Scraped <strong className="tabular">{state.ok + state.noData + state.failed}</strong> sites
+            · <strong className="tabular">{state.totals.emails}</strong> emails
+            · <strong className="tabular">{state.totals.socials}</strong> socials
+            · <strong className="tabular">{state.totals.phones + state.totals.whatsapp}</strong> phones
+          </span>
+        </div>
+      );
+    }
+  }
+
+  return null;
 }
 
 function FilterSelect({

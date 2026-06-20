@@ -8,6 +8,7 @@ import { db } from '../db.js';
 import { logger } from '../logger.js';
 import { getPlaceDetails } from './placesService.js';
 import { QuotaExhaustedError, remaining } from './quotaService.js';
+import { scrapeAgencyWebsite } from './websiteScraperService.js';
 
 export type EnrichSummary = {
   attempted: number;
@@ -97,6 +98,20 @@ export async function enrichAgency(agencyId: string): Promise<boolean> {
       source: 'google_maps',
       verified: false,
     }, { onConflict: 'agency_id,phone_normalized,phone_type' });
+  }
+
+  // Chain a website scrape right after enrichment lands the URL. Errors don't
+  // roll back the enrichment — the row is still better than before, and the
+  // auto-scrape on the Agencies page will pick up any missed sites.
+  if (details.websiteUri) {
+    try {
+      await scrapeAgencyWebsite(agency.id);
+    } catch (err) {
+      logger.warn(
+        { agencyId: agency.id, err: err instanceof Error ? err.message : String(err) },
+        'post_enrich_scrape_failed',
+      );
+    }
   }
 
   return !!canonicalPhone || !!details.websiteUri;

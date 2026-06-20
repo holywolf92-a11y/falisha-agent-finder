@@ -70,6 +70,23 @@ type Row = {
   updated_at: string;
 };
 
+// ─── bytea helpers ──────────────────────────────────────────────────────────
+// We store ciphertext/iv/auth_tag in `bytea` columns. PostgREST returns those
+// as PostgreSQL hex format ("\\x" + hex string) and only accepts the same on
+// write. Earlier we naively sent base64 — PostgreSQL stored the literal ASCII
+// bytes of the base64 string and the round-trip was lossy. These helpers
+// convert Buffer <-> "\\x..." cleanly so the schema stays vanilla bytea.
+
+function bufferToBytea(buf: Buffer): string {
+  return '\\x' + buf.toString('hex');
+}
+
+function byteaToBuffer(value: string): Buffer {
+  // Tolerate both raw hex and "\\x..." prefixed forms.
+  const hex = value.startsWith('\\x') ? value.slice(2) : value;
+  return Buffer.from(hex, 'hex');
+}
+
 /** Read a setting. Returns null if neither DB nor env supplies it. */
 export async function getSetting(key: string): Promise<{ value: string | null; source: Source }> {
   const cached = cache.get(key);
@@ -90,9 +107,9 @@ export async function getSetting(key: string): Promise<{ value: string | null; s
       if (data.is_secret && data.value_ciphertext && data.iv && data.auth_tag) {
         try {
           const c: Cipher = {
-            ciphertext: Buffer.from(data.value_ciphertext, 'base64'),
-            iv:         Buffer.from(data.iv, 'base64'),
-            authTag:    Buffer.from(data.auth_tag, 'base64'),
+            ciphertext: byteaToBuffer(data.value_ciphertext),
+            iv:         byteaToBuffer(data.iv),
+            authTag:    byteaToBuffer(data.auth_tag),
             keyVersion: data.key_version,
           };
           value = decrypt(c, key);
@@ -145,9 +162,9 @@ export async function setSetting(args: {
   if (existing && existing.is_secret && existing.value_ciphertext && existing.iv && existing.auth_tag) {
     try {
       const c: Cipher = {
-        ciphertext: Buffer.from(existing.value_ciphertext, 'base64'),
-        iv:         Buffer.from(existing.iv, 'base64'),
-        authTag:    Buffer.from(existing.auth_tag, 'base64'),
+        ciphertext: byteaToBuffer(existing.value_ciphertext),
+        iv:         byteaToBuffer(existing.iv),
+        authTag:    byteaToBuffer(existing.auth_tag),
         keyVersion: existing.key_version,
       };
       oldHmac = hmacValue(decrypt(c, args.key));
@@ -159,9 +176,9 @@ export async function setSetting(args: {
     const c = encrypt(args.value, args.key);
     row = {
       key: args.key,
-      value_ciphertext: c.ciphertext.toString('base64'),
-      iv:               c.iv.toString('base64'),
-      auth_tag:         c.authTag.toString('base64'),
+      value_ciphertext: bufferToBytea(c.ciphertext),
+      iv:               bufferToBytea(c.iv),
+      auth_tag:         bufferToBytea(c.authTag),
       key_version:      c.keyVersion,
       is_secret:        true,
       value_plaintext:  null,

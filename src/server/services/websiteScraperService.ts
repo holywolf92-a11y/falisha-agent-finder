@@ -2,10 +2,12 @@
 // the existing 512 MB Railway container alongside the API.
 //
 // For each agency with a website we fetch homepage + a few common contact pages
-// (cap 4 fetches per site), parse with cheerio, then run extractor functions
-// for emails / phones / WhatsApp links / social handles. Polite by design:
-// per-domain serialization, jittered 1.5–3 s delay, bounded concurrency, hard
-// timeout, and a no-bot User-Agent so Cloudflare challenges happen less.
+// (cap MAX_PAGES_PER_SITE per site), parse with cheerio, then run extractor
+// functions for emails / phones / WhatsApp links / social handles. Politeness:
+// bounded concurrency (CONCURRENCY), hard request timeout (REQUEST_TIMEOUT_MS),
+// 2 MB body cap, and a no-bot User-Agent so Cloudflare challenges happen less.
+// "Already scraped" is tracked via agencies.scrape_status — see the migration
+// 20260620000002_scrape_status_column.sql.
 
 import * as cheerio from 'cheerio';
 import { db } from '../db.js';
@@ -55,6 +57,33 @@ export type ScrapeSummary = {
   noWebsite: number;
   totals: { emails: number; phones: number; whatsapp: number; socials: number };
 };
+
+// ─── In-memory background-run tracker ────────────────────────────────────────
+// Single-process, single-user admin tool — we don't need a job queue. Tracks the
+// most recent (or currently active) background scrape kicked off by
+// /api/scrape/auto so the UI can poll its progress. Resets if the server
+// restarts; the page mount will re-detect pending agencies and resume.
+export type ScrapeRunState = {
+  active: boolean;
+  total: number;       // queued for this run
+  done: number;        // finished (any outcome)
+  ok: number;
+  noData: number;
+  failed: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  totals: { emails: number; phones: number; whatsapp: number; socials: number };
+};
+
+const runState: ScrapeRunState = {
+  active: false, total: 0, done: 0, ok: 0, noData: 0, failed: 0,
+  startedAt: null, finishedAt: null,
+  totals: { emails: 0, phones: 0, whatsapp: 0, socials: 0 },
+};
+
+export function getScrapeRunState(): ScrapeRunState {
+  return { ...runState, totals: { ...runState.totals } };
+}
 
 // ─── extractors ──────────────────────────────────────────────────────────────
 
@@ -193,73 +222,107 @@ async function fetchPage(url: string): Promise<string | null> {
 
 export async function scrapeAgencyWebsite(agencyId: string): Promise<ScrapeResult> {
   const sb = db();
-  const { data: agency, error } = await sb
+  const { data: agency, error: aErr } = await sb
     .from('agencies')
     .select('id, website')
     .eq('id', agencyId)
     .maybeSingle<{ id: string; website: string | null }>();
-  if (error || !agency) throw new Error(error?.message ?? 'agency_not_found');
+  if (aErr || !agency) throw new Error(aErr?.message ?? 'agency_not_found');
 
   const out: ScrapeResult = {
     agencyId, website: agency.website ?? '', status: 'no_website',
     emails: [], phones: [], whatsappNumbers: [], socials: [], pagesFetched: [],
   };
 
-  if (!agency.website) return out;
-
-  const origin = originOf(agency.website);
-  if (!origin) {
-    out.status = 'failed';
-    out.error = 'unparseable_url';
+  // Short-circuit: nothing to scrape, but still record the state so the
+  // pending detector skips it next time.
+  if (!agency.website) {
+    await markScrapeState(agencyId, 'no_website', null);
     return out;
   }
 
-  const seen = new Set<string>();
-  const emails = new Set<string>();
-  const phones = new Set<string>();
-  const wa = new Set<string>();
-  const socials = new Map<string, Set<string>>();
+  // Mark in_progress so concurrent requests see it (and so a crash mid-scrape
+  // leaves a visible 'in_progress' stuck state worth surfacing in the UI).
+  await markScrapeState(agencyId, 'in_progress', null, /*startedNow*/ true);
 
-  for (const path of CONTACT_PATHS) {
-    if (out.pagesFetched.length >= MAX_PAGES_PER_SITE) break;
-    const url = pageUrl(origin, path);
-    if (seen.has(url)) continue;
-    seen.add(url);
-
-    const html = await fetchPage(url);
-    if (!html) continue;
-    out.pagesFetched.push(url);
-
-    const $ = cheerio.load(html);
-    // Strip script/style noise so phone/email regex doesn't catch JS artefacts.
-    $('script, style, noscript').remove();
-    const text = $('body').text().replace(/\s+/g, ' ').trim();
-
-    for (const e of extractEmails(html, text)) emails.add(e);
-    for (const p of extractPhones(html + ' ' + text)) phones.add(p);
-    const w = extractWhatsapp(html);
-    for (const n of w.numbers) wa.add(n);
-    for (const c of w.chats) socials.set('whatsapp', (socials.get('whatsapp') ?? new Set()).add(c));
-    for (const [platform, urls] of extractSocials(html)) {
-      const cur = socials.get(platform) ?? new Set<string>();
-      for (const u of urls) cur.add(u);
-      socials.set(platform, cur);
+  try {
+    const origin = originOf(agency.website);
+    if (!origin) {
+      out.status = 'failed';
+      out.error = 'unparseable_url';
+      return out;
     }
+
+    const seen = new Set<string>();
+    const emails = new Set<string>();
+    const phones = new Set<string>();
+    const wa = new Set<string>();
+    const socials = new Map<string, Set<string>>();
+
+    for (const path of CONTACT_PATHS) {
+      if (out.pagesFetched.length >= MAX_PAGES_PER_SITE) break;
+      const url = pageUrl(origin, path);
+      if (seen.has(url)) continue;
+      seen.add(url);
+
+      const html = await fetchPage(url);
+      if (!html) continue;
+      out.pagesFetched.push(url);
+
+      const $ = cheerio.load(html);
+      // Strip script/style noise so phone/email regex doesn't catch JS artefacts.
+      $('script, style, noscript').remove();
+      const text = $('body').text().replace(/\s+/g, ' ').trim();
+
+      for (const e of extractEmails(html, text)) emails.add(e);
+      for (const p of extractPhones(html + ' ' + text)) phones.add(p);
+      const w = extractWhatsapp(html);
+      for (const n of w.numbers) wa.add(n);
+      for (const c of w.chats) socials.set('whatsapp', (socials.get('whatsapp') ?? new Set()).add(c));
+      for (const [platform, urls] of extractSocials(html)) {
+        const cur = socials.get(platform) ?? new Set<string>();
+        for (const u of urls) cur.add(u);
+        socials.set(platform, cur);
+      }
+    }
+
+    out.emails = Array.from(emails).slice(0, 20);
+    out.phones = Array.from(phones).slice(0, 10);
+    out.whatsappNumbers = Array.from(wa).slice(0, 5);
+    out.socials = Array.from(socials.entries()).flatMap(([platform, urls]) =>
+      Array.from(urls).slice(0, 3).map((url) => ({ platform, url })),
+    );
+
+    await persist(out);
+
+    out.status = (out.emails.length + out.phones.length + out.whatsappNumbers.length + out.socials.length) > 0
+      ? 'ok' : 'no_data';
+    return out;
+  } finally {
+    // Always land in a terminal state — even on throw — so the agency never
+    // gets stuck in 'in_progress' after a server crash mid-scrape.
+    const finalStatus =
+      out.status === 'ok'         ? 'scraped'
+      : out.status === 'no_data'  ? 'no_data'
+      : out.status === 'no_website' ? 'no_website'
+      : 'failed';
+    await markScrapeState(agencyId, finalStatus, out.error ?? null);
   }
+}
 
-  out.emails = Array.from(emails).slice(0, 20);
-  out.phones = Array.from(phones).slice(0, 10);
-  out.whatsappNumbers = Array.from(wa).slice(0, 5);
-  out.socials = Array.from(socials.entries()).flatMap(([platform, urls]) =>
-    Array.from(urls).slice(0, 3).map((url) => ({ platform, url })),
-  );
-
-  // Persist
-  await persist(out);
-
-  out.status = (out.emails.length + out.phones.length + out.whatsappNumbers.length + out.socials.length) > 0
-    ? 'ok' : 'no_data';
-  return out;
+async function markScrapeState(
+  agencyId: string,
+  status: 'in_progress' | 'scraped' | 'no_data' | 'failed' | 'no_website',
+  error: string | null,
+  startedNow = false,
+): Promise<void> {
+  const sb = db();
+  const patch: Record<string, unknown> = { scrape_status: status, scrape_error: error };
+  const now = new Date().toISOString();
+  if (status === 'in_progress' || startedNow) patch.scrape_attempted_at = now;
+  if (status !== 'in_progress')                patch.scrape_completed_at = now;
+  const { error: uErr } = await sb.from('agencies').update(patch).eq('id', agencyId);
+  if (uErr) logger.warn({ agencyId, status, err: uErr.message }, 'scrape_state_update_failed');
 }
 
 async function persist(r: ScrapeResult): Promise<void> {
@@ -278,22 +341,28 @@ async function persist(r: ScrapeResult): Promise<void> {
     if (digits.length >= 8) knownTails.add(digits.slice(-8) + '|' + p.phone_type);
   }
 
+  const logErr = (kind: string, err: { message: string } | null, extra: Record<string, unknown> = {}) => {
+    if (err) logger.warn({ agencyId: r.agencyId, kind, err: err.message, ...extra }, 'scrape_persist_failed');
+  };
+
   // Emails
   for (const email of r.emails) {
-    await sb.from('agency_emails').upsert({
+    const { error } = await sb.from('agency_emails').upsert({
       agency_id: r.agencyId, email, email_normalized: email.toLowerCase(),
-      source: 'website_scrape', source_url: r.website, confidence: 70, verified: false,
+      source: 'website_scrape', source_url: r.website.slice(0, 500), confidence: 70, verified: false,
     }, { onConflict: 'agency_id,email_normalized' });
+    logErr('email', error, { email });
   }
   // Phones
   for (const phone of r.phones) {
     const normalized = phone.replace(/[^\d+]/g, '');
     const tail = normalized.replace(/\D/g, '').slice(-8);
     if (tail && knownTails.has(tail + '|main')) continue; // duplicate of existing
-    await sb.from('agency_phones').upsert({
+    const { error } = await sb.from('agency_phones').upsert({
       agency_id: r.agencyId, phone, phone_normalized: normalized,
-      phone_type: 'main', source: 'website_scrape', source_url: r.website, verified: false,
+      phone_type: 'main', source: 'website_scrape', source_url: r.website.slice(0, 500), verified: false,
     }, { onConflict: 'agency_id,phone_normalized,phone_type' });
+    logErr('phone', error, { phone });
     if (tail) knownTails.add(tail + '|main');
   }
   // WhatsApp numbers as phones with type=whatsapp
@@ -301,18 +370,137 @@ async function persist(r: ScrapeResult): Promise<void> {
     const normalized = wa.replace(/[^\d+]/g, '');
     const tail = normalized.replace(/\D/g, '').slice(-8);
     if (tail && knownTails.has(tail + '|whatsapp')) continue;
-    await sb.from('agency_phones').upsert({
+    const { error } = await sb.from('agency_phones').upsert({
       agency_id: r.agencyId, phone: wa, phone_normalized: normalized,
-      phone_type: 'whatsapp', source: 'website_scrape', source_url: r.website, verified: false,
+      phone_type: 'whatsapp', source: 'website_scrape', source_url: r.website.slice(0, 500), verified: false,
     }, { onConflict: 'agency_id,phone_normalized,phone_type' });
+    logErr('whatsapp', error, { wa });
     if (tail) knownTails.add(tail + '|whatsapp');
   }
   // Socials
   for (const { platform, url } of r.socials) {
-    await sb.from('agency_socials').upsert({
-      agency_id: r.agencyId, platform, url, source: 'website_scrape',
+    const { error } = await sb.from('agency_socials').upsert({
+      agency_id: r.agencyId, platform, url: url.slice(0, 500), source: 'website_scrape',
     }, { onConflict: 'agency_id,platform,url' });
+    logErr('social', error, { platform, url });
   }
+}
+
+// ─── pending discovery ──────────────────────────────────────────────────────
+// "Not yet scraped" = agencies.scrape_status = 'not_scraped' AND website set.
+// One indexed lookup, no JS-side dedup, no 1000-row Supabase cap risk.
+
+async function listPendingAgencyIds(filter: { countryCode?: string; limit: number }): Promise<string[]> {
+  const sb = db();
+
+  let q = sb.from('agencies')
+    .select('id')
+    .eq('scrape_status', 'not_scraped')
+    .not('website', 'is', null)
+    .is('deleted_at', null)
+    .order('rating',       { ascending: false, nullsFirst: false })
+    .order('review_count', { ascending: false })
+    .limit(filter.limit);
+  if (filter.countryCode) q = q.eq('country_code', filter.countryCode.toLowerCase());
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+}
+
+export async function countPending(filter: { countryCode?: string } = {}): Promise<number> {
+  const sb = db();
+  let q = sb.from('agencies')
+    .select('id', { count: 'exact', head: true })
+    .eq('scrape_status', 'not_scraped')
+    .not('website', 'is', null)
+    .is('deleted_at', null);
+  if (filter.countryCode) q = q.eq('country_code', filter.countryCode.toLowerCase());
+  const { count, error } = await q;
+  if (error) {
+    logger.warn({ err: error.message }, 'count_pending_failed');
+    return 0;
+  }
+  return count ?? 0;
+}
+
+/**
+ * Auto-scrape entrypoint. Atomically idempotent: flips runState.active=true
+ * BEFORE the await on listPendingAgencyIds, so two near-simultaneous callers
+ * can't both spawn worker pools that corrupt the shared counters. Unwinds the
+ * flag if the lookup throws or returns zero candidates.
+ */
+export async function startAutoScrape(filter: { countryCode?: string; limit?: number } = {}): Promise<ScrapeRunState> {
+  if (runState.active) return getScrapeRunState();
+
+  // Atomic guard — set BEFORE the first await so a second caller entering
+  // during the lookup window short-circuits cleanly.
+  runState.active = true;
+  runState.total = 0;
+  runState.done = 0;
+  runState.ok = 0;
+  runState.noData = 0;
+  runState.failed = 0;
+  runState.totals = { emails: 0, phones: 0, whatsapp: 0, socials: 0 };
+  runState.startedAt = new Date().toISOString();
+  runState.finishedAt = null;
+
+  let ids: string[];
+  try {
+    ids = await listPendingAgencyIds({
+      countryCode: filter.countryCode,
+      limit: Math.min(filter.limit ?? 1000, 2000),
+    });
+  } catch (err) {
+    runState.active = false;
+    runState.finishedAt = new Date().toISOString();
+    throw err;
+  }
+
+  runState.total = ids.length;
+  if (ids.length === 0) {
+    runState.active = false;
+    runState.finishedAt = new Date().toISOString();
+    return getScrapeRunState();
+  }
+
+  // Fire-and-forget. Workers update runState as each agency finishes so the UI
+  // can poll. Errors are caught inside scrapeAgencyWebsite + runAutoScrape.
+  void runAutoScrape(ids);
+
+  return getScrapeRunState();
+}
+
+async function runAutoScrape(ids: string[]): Promise<void> {
+  let idx = 0;
+  const workers = Array.from({ length: CONCURRENCY }, async () => {
+    while (true) {
+      const my = idx++;
+      if (my >= ids.length) return;
+      const id = ids[my];
+      try {
+        const r = await scrapeAgencyWebsite(id);
+        if      (r.status === 'ok')      runState.ok      += 1;
+        else if (r.status === 'no_data') runState.noData  += 1;
+        else                             runState.failed  += 1;
+        runState.totals.emails   += r.emails.length;
+        runState.totals.phones   += r.phones.length;
+        runState.totals.whatsapp += r.whatsappNumbers.length;
+        runState.totals.socials  += r.socials.length;
+      } catch (err) {
+        runState.failed += 1;
+        logger.warn({ agencyId: id, err: err instanceof Error ? err.message : String(err) }, 'auto_scrape_failed');
+      }
+      runState.done += 1;
+    }
+  });
+  await Promise.all(workers);
+  runState.active = false;
+  runState.finishedAt = new Date().toISOString();
+  logger.info({
+    total: runState.total, ok: runState.ok, noData: runState.noData, failed: runState.failed,
+    ...runState.totals,
+  }, 'auto_scrape_complete');
 }
 
 // ─── batch ───────────────────────────────────────────────────────────────────

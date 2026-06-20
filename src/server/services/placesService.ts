@@ -11,6 +11,7 @@
 //     1,000 free events / month.
 
 import { getSetting } from './settingsService.js';
+import { recordOrThrow } from './quotaService.js';
 import { logger } from '../logger.js';
 
 const BASE = 'https://places.googleapis.com/v1';
@@ -185,6 +186,9 @@ type RawDetailsResponse = {
 /** Fetch full details for one place — call only for IDs we want to keep. */
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   const key = await getApiKey();
+  // Quota guard for the Enterprise SKU (1k free/mo).
+  await recordOrThrow('place_details');
+
   const res = await fetch(`${BASE}/places/${encodeURIComponent(placeId)}`, {
     method: 'GET',
     headers: {
