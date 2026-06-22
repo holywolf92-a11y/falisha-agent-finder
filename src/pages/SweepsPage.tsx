@@ -26,20 +26,59 @@ type Sweep = {
   created_at: string;
 };
 
+// Keep in sync with src/server/services/sweepService.ts SEED_CITIES — both
+// lists drive what the user can actually sweep. Frontend duplicate exists so
+// the picker renders without a network round-trip; the backend remains the
+// source of truth and silently ignores any city name it doesn't know.
 const ALL_GULF_CITIES = [
-  { city: 'Dubai',        country: 'AE' },
-  { city: 'Abu Dhabi',    country: 'AE' },
-  { city: 'Sharjah',      country: 'AE' },
-  { city: 'Riyadh',       country: 'SA' },
-  { city: 'Jeddah',       country: 'SA' },
-  { city: 'Dammam',       country: 'SA' },
-  { city: 'Doha',         country: 'QA' },
-  { city: 'Kuwait City',  country: 'KW' },
-  { city: 'Manama',       country: 'BH' },
-  { city: 'Muscat',       country: 'OM' },
+  // UAE 🇦🇪
+  { city: 'Dubai',          country: 'AE' },
+  { city: 'Abu Dhabi',      country: 'AE' },
+  { city: 'Sharjah',        country: 'AE' },
+  { city: 'Ajman',          country: 'AE' },
+  { city: 'Ras Al Khaimah', country: 'AE' },
+  { city: 'Fujairah',       country: 'AE' },
+  { city: 'Umm Al Quwain',  country: 'AE' },
+  { city: 'Al Ain',         country: 'AE' },
+  // Saudi Arabia 🇸🇦
+  { city: 'Riyadh',         country: 'SA' },
+  { city: 'Jeddah',         country: 'SA' },
+  { city: 'Dammam',         country: 'SA' },
+  { city: 'Mecca',          country: 'SA' },
+  { city: 'Medina',         country: 'SA' },
+  { city: 'Khobar',         country: 'SA' },
+  { city: 'Tabuk',          country: 'SA' },
+  { city: 'Abha',           country: 'SA' },
+  { city: 'Buraidah',       country: 'SA' },
+  { city: 'Jubail',         country: 'SA' },
+  // Qatar / Kuwait / Bahrain — city-states, single seed
+  { city: 'Doha',           country: 'QA' },
+  { city: 'Kuwait City',    country: 'KW' },
+  { city: 'Manama',         country: 'BH' },
+  // Oman 🇴🇲
+  { city: 'Muscat',         country: 'OM' },
+  { city: 'Salalah',        country: 'OM' },
+  { city: 'Sohar',          country: 'OM' },
+  { city: 'Nizwa',          country: 'OM' },
+  // Turkey 🇹🇷
+  { city: 'Istanbul',       country: 'TR' },
+  { city: 'Ankara',         country: 'TR' },
+  { city: 'Izmir',          country: 'TR' },
+  { city: 'Bursa',          country: 'TR' },
+  // Serbia 🇷🇸
+  { city: 'Belgrade',       country: 'RS' },
+  { city: 'Novi Sad',       country: 'RS' },
+  { city: 'Nis',            country: 'RS' },
+  // Maldives 🇲🇻
+  { city: 'Male',           country: 'MV' },
+  { city: 'Hulhumale',      country: 'MV' },
+  { city: 'Addu City',      country: 'MV' },
 ] as const;
 
-const FLAG: Record<string, string> = { AE: '🇦🇪', SA: '🇸🇦', QA: '🇶🇦', KW: '🇰🇼', BH: '🇧🇭', OM: '🇴🇲' };
+const FLAG: Record<string, string> = {
+  AE: '🇦🇪', SA: '🇸🇦', QA: '🇶🇦', KW: '🇰🇼', BH: '🇧🇭', OM: '🇴🇲',
+  TR: '🇹🇷', RS: '🇷🇸', MV: '🇲🇻',
+};
 
 export function SweepsPage() {
   const [sweeps, setSweeps] = useState<Sweep[]>([]);
