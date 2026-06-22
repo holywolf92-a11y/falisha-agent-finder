@@ -7,19 +7,56 @@ import { db } from '../db.js';
 import { logger } from '../logger.js';
 import { searchText, type PlaceDiscoveryResult } from './placesService.js';
 
-// Canonical Gulf city grid. Add more by editing this list — no schema change.
-export const GULF_CITIES = [
-  { city: 'Dubai',       country: 'AE', region: 'AE', lat: 25.2048, lng: 55.2708, radius: 30000 },
-  { city: 'Abu Dhabi',   country: 'AE', region: 'AE', lat: 24.4539, lng: 54.3773, radius: 30000 },
-  { city: 'Sharjah',     country: 'AE', region: 'AE', lat: 25.3463, lng: 55.4209, radius: 20000 },
-  { city: 'Riyadh',      country: 'SA', region: 'SA', lat: 24.7136, lng: 46.6753, radius: 30000 },
-  { city: 'Jeddah',      country: 'SA', region: 'SA', lat: 21.4858, lng: 39.1925, radius: 25000 },
-  { city: 'Dammam',      country: 'SA', region: 'SA', lat: 26.4207, lng: 50.0888, radius: 20000 },
-  { city: 'Doha',        country: 'QA', region: 'QA', lat: 25.2854, lng: 51.5310, radius: 15000 },
-  { city: 'Kuwait City', country: 'KW', region: 'KW', lat: 29.3759, lng: 47.9774, radius: 15000 },
-  { city: 'Manama',      country: 'BH', region: 'BH', lat: 26.2235, lng: 50.5876, radius: 15000 },
-  { city: 'Muscat',      country: 'OM', region: 'OM', lat: 23.5859, lng: 58.4059, radius: 20000 },
+// Canonical city grid for sweep discovery. Coordinates verified, radii sized
+// per metro footprint. Add more by editing this list — no schema change.
+// Backwards-compatible alias `GULF_CITIES` preserved for any external import.
+export const SEED_CITIES = [
+  // ── UAE 🇦🇪 ──
+  { city: 'Dubai',          country: 'AE', region: 'AE', lat: 25.2048, lng: 55.2708, radius: 30000 },
+  { city: 'Abu Dhabi',      country: 'AE', region: 'AE', lat: 24.4539, lng: 54.3773, radius: 30000 },
+  { city: 'Sharjah',        country: 'AE', region: 'AE', lat: 25.3463, lng: 55.4209, radius: 20000 },
+  { city: 'Ajman',          country: 'AE', region: 'AE', lat: 25.4052, lng: 55.5136, radius: 12000 },
+  { city: 'Ras Al Khaimah', country: 'AE', region: 'AE', lat: 25.7895, lng: 55.9432, radius: 15000 },
+  { city: 'Fujairah',       country: 'AE', region: 'AE', lat: 25.1288, lng: 56.3265, radius: 12000 },
+  { city: 'Umm Al Quwain',  country: 'AE', region: 'AE', lat: 25.5647, lng: 55.5552, radius:  8000 },
+  { city: 'Al Ain',         country: 'AE', region: 'AE', lat: 24.2075, lng: 55.7447, radius: 20000 },
+  // ── Saudi Arabia 🇸🇦 ──
+  { city: 'Riyadh',         country: 'SA', region: 'SA', lat: 24.7136, lng: 46.6753, radius: 30000 },
+  { city: 'Jeddah',         country: 'SA', region: 'SA', lat: 21.4858, lng: 39.1925, radius: 25000 },
+  { city: 'Dammam',         country: 'SA', region: 'SA', lat: 26.4207, lng: 50.0888, radius: 20000 },
+  { city: 'Mecca',          country: 'SA', region: 'SA', lat: 21.3891, lng: 39.8579, radius: 20000 },
+  { city: 'Medina',         country: 'SA', region: 'SA', lat: 24.4709, lng: 39.6123, radius: 20000 },
+  { city: 'Khobar',         country: 'SA', region: 'SA', lat: 26.2794, lng: 50.2083, radius: 15000 },
+  { city: 'Tabuk',          country: 'SA', region: 'SA', lat: 28.3998, lng: 36.5700, radius: 15000 },
+  { city: 'Abha',           country: 'SA', region: 'SA', lat: 18.2164, lng: 42.5053, radius: 12000 },
+  { city: 'Buraidah',       country: 'SA', region: 'SA', lat: 26.3260, lng: 43.9750, radius: 15000 },
+  { city: 'Jubail',         country: 'SA', region: 'SA', lat: 27.0046, lng: 49.6458, radius: 15000 },
+  // ── Qatar 🇶🇦 / Kuwait 🇰🇼 / Bahrain 🇧🇭 (city-states — single seed each) ──
+  { city: 'Doha',           country: 'QA', region: 'QA', lat: 25.2854, lng: 51.5310, radius: 15000 },
+  { city: 'Kuwait City',    country: 'KW', region: 'KW', lat: 29.3759, lng: 47.9774, radius: 15000 },
+  { city: 'Manama',         country: 'BH', region: 'BH', lat: 26.2235, lng: 50.5876, radius: 15000 },
+  // ── Oman 🇴🇲 ──
+  { city: 'Muscat',         country: 'OM', region: 'OM', lat: 23.5859, lng: 58.4059, radius: 20000 },
+  { city: 'Salalah',        country: 'OM', region: 'OM', lat: 17.0151, lng: 54.0924, radius: 20000 },
+  { city: 'Sohar',          country: 'OM', region: 'OM', lat: 24.3473, lng: 56.7300, radius: 15000 },
+  { city: 'Nizwa',          country: 'OM', region: 'OM', lat: 22.9333, lng: 57.5333, radius: 12000 },
+  // ── Turkey 🇹🇷 ──
+  { city: 'Istanbul',       country: 'TR', region: 'TR', lat: 41.0082, lng: 28.9784, radius: 30000 },
+  { city: 'Ankara',         country: 'TR', region: 'TR', lat: 39.9334, lng: 32.8597, radius: 25000 },
+  { city: 'Izmir',          country: 'TR', region: 'TR', lat: 38.4192, lng: 27.1287, radius: 20000 },
+  { city: 'Bursa',          country: 'TR', region: 'TR', lat: 40.1828, lng: 29.0665, radius: 20000 },
+  // ── Serbia 🇷🇸 ──
+  { city: 'Belgrade',       country: 'RS', region: 'RS', lat: 44.7866, lng: 20.4489, radius: 25000 },
+  { city: 'Novi Sad',       country: 'RS', region: 'RS', lat: 45.2671, lng: 19.8335, radius: 15000 },
+  { city: 'Nis',            country: 'RS', region: 'RS', lat: 43.3209, lng: 21.8958, radius: 15000 },
+  // ── Maldives 🇲🇻 ──
+  { city: 'Male',           country: 'MV', region: 'MV', lat:  4.1755, lng: 73.5093, radius:  8000 },
+  { city: 'Hulhumale',      country: 'MV', region: 'MV', lat:  4.2105, lng: 73.5410, radius:  8000 },
+  { city: 'Addu City',      country: 'MV', region: 'MV', lat: -0.6300, lng: 73.1000, radius: 12000 },
 ] as const;
+
+// Back-compat alias — older callers may still import GULF_CITIES.
+export const GULF_CITIES = SEED_CITIES;
 
 // English-language synonyms for "recruitment agency"
 export const KEYWORDS_EN = [
@@ -45,7 +82,7 @@ const PAGE_SIZE = 20;
 const POLITE_DELAY_MS = 200; // be friendly to Places, well under rate cap
 
 export type SweepInput = {
-  cities?: string[];           // names from GULF_CITIES.city; omit for ALL
+  cities?: string[];           // names from SEED_CITIES.city; omit for ALL
   keywordsEn?: string[];
   keywordsAr?: string[];
   triggeredBy?: string;
@@ -67,8 +104,8 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
   const sb = db();
 
   // Resolve city list
-  const cityNames = input.cities && input.cities.length > 0 ? input.cities : GULF_CITIES.map((c) => c.city);
-  const cities = GULF_CITIES.filter((c) => cityNames.includes(c.city));
+  const cityNames = input.cities && input.cities.length > 0 ? input.cities : SEED_CITIES.map((c) => c.city);
+  const cities = SEED_CITIES.filter((c) => cityNames.includes(c.city));
   const keywordsEn = input.keywordsEn ?? KEYWORDS_EN;
   const keywordsAr = input.keywordsAr ?? KEYWORDS_AR;
 

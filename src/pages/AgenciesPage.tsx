@@ -11,6 +11,8 @@ import { QuotaWidget, refreshQuota, useQuota } from '@/components/app/QuotaWidge
 import {
   Building2, Search, Star, ChevronLeft, ChevronRight, Sparkles, Loader2, Filter,
   Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2,
+  Linkedin, Facebook, Instagram, Youtube, Twitter, Music2,
+  type LucideIcon,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
@@ -29,6 +31,7 @@ type ScrapeRunState = {
   totals: { emails: number; phones: number; whatsapp: number; socials: number };
 };
 
+type AgencySocial = { platform: string; url: string };
 type Agency = {
   id: string;
   name: string;
@@ -43,16 +46,22 @@ type Agency = {
   enrichment_status: string;
   last_sweep_at: string | null;
   agency_phones?: AgencyPhone[];
+  agency_socials?: AgencySocial[];
 };
 
 const COUNTRIES = [
   { code: '',   label: 'All countries' },
+  // Gulf
   { code: 'ae', label: '🇦🇪 UAE' },
   { code: 'sa', label: '🇸🇦 Saudi Arabia' },
   { code: 'qa', label: '🇶🇦 Qatar' },
   { code: 'kw', label: '🇰🇼 Kuwait' },
   { code: 'bh', label: '🇧🇭 Bahrain' },
   { code: 'om', label: '🇴🇲 Oman' },
+  // Expanded coverage
+  { code: 'tr', label: '🇹🇷 Turkey' },
+  { code: 'rs', label: '🇷🇸 Serbia' },
+  { code: 'mv', label: '🇲🇻 Maldives' },
 ];
 const MIN_RATINGS = [
   { value: '',    label: 'Any rating' },
@@ -350,13 +359,14 @@ export function AgenciesPage() {
                     <th className="px-3 py-2 font-medium">Country</th>
                     <th className="px-3 py-2 font-medium">Rating</th>
                     <th className="px-3 py-2 font-medium">Contact</th>
+                    <th className="px-3 py-2 font-medium">Social</th>
                     <th className="px-3 py-2 font-medium">Type</th>
                     <th className="px-3 py-2 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && agencies.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
                   )}
                   {agencies.map((a) => {
                     const phone = bestPhone(a.agency_phones);
@@ -382,6 +392,9 @@ export function AgenciesPage() {
                         </td>
                         <td className="px-3 py-1.5">
                           <ContactCell phone={phone?.phone ?? null} website={a.website} waHref={wa} telHref={tel} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <SocialCell socials={a.agency_socials} />
                         </td>
                         <td className="px-3 py-1.5 text-muted-foreground capitalize max-w-[10rem] truncate">{(a.category || '').replace(/_/g, ' ') || '—'}</td>
                         <td className="px-3 py-1.5">
@@ -567,6 +580,60 @@ function Row({ label, value, highlight }: { label: string; value: string; highli
     <div className="flex items-baseline justify-between text-sm">
       <span className="text-muted-foreground">{label}</span>
       <span className={highlight ? 'text-2xl font-semibold tracking-tight tabular' : 'tabular font-medium'}>{value}</span>
+    </div>
+  );
+}
+
+const SOCIAL_META: Record<string, { icon: LucideIcon; color: string; label: string }> = {
+  linkedin:  { icon: Linkedin,       color: 'text-[#0A66C2] hover:bg-[#0A66C2]/10', label: 'LinkedIn'  },
+  facebook:  { icon: Facebook,       color: 'text-[#1877F2] hover:bg-[#1877F2]/10', label: 'Facebook'  },
+  instagram: { icon: Instagram,      color: 'text-[#E4405F] hover:bg-[#E4405F]/10', label: 'Instagram' },
+  twitter:   { icon: Twitter,        color: 'text-foreground hover:bg-muted',        label: 'Twitter/X' },
+  youtube:   { icon: Youtube,        color: 'text-[#FF0000] hover:bg-[#FF0000]/10', label: 'YouTube'   },
+  tiktok:    { icon: Music2,         color: 'text-foreground hover:bg-muted',        label: 'TikTok'    },
+  whatsapp:  { icon: MessageSquare,  color: 'text-success hover:bg-success/10',      label: 'WhatsApp'  },
+  website:   { icon: Globe,          color: 'text-muted-foreground hover:bg-muted',  label: 'Website'   },
+};
+// Order so the most-used channels come first in the row
+const SOCIAL_ORDER = ['linkedin', 'facebook', 'instagram', 'youtube', 'twitter', 'tiktok', 'whatsapp', 'website'] as const;
+
+function SocialCell({ socials }: { socials: AgencySocial[] | undefined }) {
+  if (!socials || socials.length === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  // Dedupe by platform — pick the first URL per platform — and sort by SOCIAL_ORDER.
+  const byPlatform = new Map<string, string>();
+  for (const s of socials) {
+    if (!byPlatform.has(s.platform)) byPlatform.set(s.platform, s.url);
+  }
+  const sorted: Array<{ platform: string; url: string }> = SOCIAL_ORDER
+    .filter((p) => byPlatform.has(p))
+    .map((p) => ({ platform: p as string, url: byPlatform.get(p)! }));
+  // Anything we didn't recognize, append at the end (rare)
+  for (const [platform, url] of byPlatform) {
+    if (!(SOCIAL_ORDER as readonly string[]).includes(platform)) {
+      sorted.push({ platform, url });
+    }
+  }
+  return (
+    <div className="flex items-center gap-0.5">
+      {sorted.map(({ platform, url }) => {
+        const meta = SOCIAL_META[platform] ?? { icon: Globe, color: 'text-muted-foreground hover:bg-muted', label: platform };
+        const Icon = meta.icon;
+        return (
+          <a
+            key={platform + url}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`h-6 w-6 rounded inline-flex items-center justify-center transition-colors ${meta.color}`}
+            title={meta.label}
+          >
+            <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
+          </a>
+        );
+      })}
     </div>
   );
 }
