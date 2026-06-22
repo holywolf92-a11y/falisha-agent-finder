@@ -1,24 +1,37 @@
 // Per-month usage tracking for the Google Places API. Wraps every Place
-// Details and Text Search call with a check + increment so the app stops
-// hitting the API before the monthly free tier runs out.
+// Details and Text Search call with a check + increment so the in-app
+// counter stays accurate against the GCP billing dashboard.
 //
-// Cap defaults are deliberately under the published Google free tiers so we
-// keep a small buffer for manual / ad-hoc enrichments without surprises.
+// Paid tier active — billing is enabled on the GCP project. The "cap" below
+// is deliberately set well above realistic monthly volume so the in-app gate
+// never blocks enrichment, but stays low enough that a runaway loop bug
+// would eventually trip the circuit breaker instead of running up unbounded
+// GCP charges. To return to free-tier mode, set these to 5000 / 1000.
 
 import { db, isDbConfigured } from '../db.js';
 
 export type ApiMethod = 'text_search' | 'place_details';
 
+// Effective hard cap per method (used by recordOrThrow). 1M/month is ~33k/day
+// — far above any realistic real-world burn rate, but a finite ceiling so
+// nothing runs unbounded.
 export const FREE_TIER_QUOTAS: Record<ApiMethod, number> = {
-  text_search:   5_000,   // Pro tier monthly free
-  place_details: 1_000,   // Enterprise tier monthly free
+  text_search:   1_000_000,
+  place_details: 1_000_000,
 };
 
-// We cap a bit under the actual free tier so manual enrichments are always
-// possible until the very end of the month.
+// Buffer is zero in paid mode — every approved call should be allowed.
 export const SAFETY_BUFFER: Record<ApiMethod, number> = {
-  text_search:   200,
-  place_details: 50,
+  text_search:   0,
+  place_details: 0,
+};
+
+// Where Google's actual free tier ends. The widget shows the bar in amber
+// once we cross this so the user has cost visibility without a hard gate.
+// (Updating these to match Google's published 2026 tiers — verify quarterly.)
+export const FREE_TIER_THRESHOLD: Record<ApiMethod, number> = {
+  text_search:   5_000,   // Pro tier monthly free
+  place_details: 1_000,   // Enterprise tier monthly free
 };
 
 export class QuotaExhaustedError extends Error {
@@ -44,9 +57,11 @@ export type QuotaSnapshot = {
   method: ApiMethod;
   period: string;
   used: number;
-  cap: number;                 // effective cap (Google free tier minus our buffer)
-  freeTier: number;            // Google's actual monthly free
+  cap: number;                 // effective hard ceiling — circuit breaker only
+  freeTier: number;            // Google's actual monthly free (cost-visibility line)
   safetyBuffer: number;
+  freeTierThreshold: number;   // alias of freeTier kept for the UI's amber-bar logic
+  pastFreeTier: boolean;       // true once `used` crosses the free-tier line (now paying per call)
   resetsAt: string;
   percentage: number;
 };
@@ -55,6 +70,7 @@ export async function getQuota(method: ApiMethod): Promise<QuotaSnapshot> {
   const freeTier = FREE_TIER_QUOTAS[method];
   const buffer = SAFETY_BUFFER[method];
   const cap = freeTier - buffer;
+  const freeTierThreshold = FREE_TIER_THRESHOLD[method];
   const period = currentPeriodKey();
   let used = 0;
 
@@ -73,8 +89,10 @@ export async function getQuota(method: ApiMethod): Promise<QuotaSnapshot> {
     period,
     used,
     cap,
-    freeTier,
+    freeTier: freeTierThreshold, // expose the realistic free-tier number to the UI, not the 1M ceiling
     safetyBuffer: buffer,
+    freeTierThreshold,
+    pastFreeTier: used > freeTierThreshold,
     resetsAt: nextResetIso(),
     percentage: cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : 0,
   };
