@@ -26,59 +26,7 @@ type Sweep = {
   created_at: string;
 };
 
-// Keep in sync with src/server/services/sweepService.ts SEED_CITIES — both
-// lists drive what the user can actually sweep. Frontend duplicate exists so
-// the picker renders without a network round-trip; the backend remains the
-// source of truth and silently ignores any city name it doesn't know.
-const ALL_GULF_CITIES = [
-  // UAE 🇦🇪
-  { city: 'Dubai',          country: 'AE' },
-  { city: 'Abu Dhabi',      country: 'AE' },
-  { city: 'Sharjah',        country: 'AE' },
-  { city: 'Ajman',          country: 'AE' },
-  { city: 'Ras Al Khaimah', country: 'AE' },
-  { city: 'Fujairah',       country: 'AE' },
-  { city: 'Umm Al Quwain',  country: 'AE' },
-  { city: 'Al Ain',         country: 'AE' },
-  // Saudi Arabia 🇸🇦
-  { city: 'Riyadh',         country: 'SA' },
-  { city: 'Jeddah',         country: 'SA' },
-  { city: 'Dammam',         country: 'SA' },
-  { city: 'Mecca',          country: 'SA' },
-  { city: 'Medina',         country: 'SA' },
-  { city: 'Khobar',         country: 'SA' },
-  { city: 'Tabuk',          country: 'SA' },
-  { city: 'Abha',           country: 'SA' },
-  { city: 'Buraidah',       country: 'SA' },
-  { city: 'Jubail',         country: 'SA' },
-  // Qatar / Kuwait / Bahrain — city-states, single seed
-  { city: 'Doha',           country: 'QA' },
-  { city: 'Kuwait City',    country: 'KW' },
-  { city: 'Manama',         country: 'BH' },
-  // Oman 🇴🇲
-  { city: 'Muscat',         country: 'OM' },
-  { city: 'Salalah',        country: 'OM' },
-  { city: 'Sohar',          country: 'OM' },
-  { city: 'Nizwa',          country: 'OM' },
-  // Turkey 🇹🇷
-  { city: 'Istanbul',       country: 'TR' },
-  { city: 'Ankara',         country: 'TR' },
-  { city: 'Izmir',          country: 'TR' },
-  { city: 'Bursa',          country: 'TR' },
-  // Serbia 🇷🇸
-  { city: 'Belgrade',       country: 'RS' },
-  { city: 'Novi Sad',       country: 'RS' },
-  { city: 'Nis',            country: 'RS' },
-  // Maldives 🇲🇻
-  { city: 'Male',           country: 'MV' },
-  { city: 'Hulhumale',      country: 'MV' },
-  { city: 'Addu City',      country: 'MV' },
-] as const;
-
-const FLAG: Record<string, string> = {
-  AE: '🇦🇪', SA: '🇸🇦', QA: '🇶🇦', KW: '🇰🇼', BH: '🇧🇭', OM: '🇴🇲',
-  TR: '🇹🇷', RS: '🇷🇸', MV: '🇲🇻',
-};
+type CountryMeta = { code: string; name: string; flag: string; cities: number };
 
 export function SweepsPage() {
   const [sweeps, setSweeps] = useState<Sweep[]>([]);
@@ -118,7 +66,7 @@ export function SweepsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sweeps</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Discovery runs across Gulf cities × recruitment-agency keywords.
+            Discover agencies anywhere via Google Maps — by niche + country, tiled across major cities.
           </p>
         </div>
         <Dialog open={openNew} onOpenChange={setOpenNew}>
@@ -141,7 +89,7 @@ export function SweepsPage() {
             </div>
             <h3 className="mt-4 text-base font-medium">No sweeps yet</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Click <strong>Run sweep</strong> above to discover Gulf recruitment agencies.
+              Click <strong>Run sweep</strong> above to discover agencies by niche and country.
             </p>
           </CardContent>
         </Card>
@@ -154,7 +102,7 @@ export function SweepsPage() {
                   <tr className="text-left text-muted-foreground border-b border-border">
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium">Started</th>
-                    <th className="px-4 py-2 font-medium">Cities</th>
+                    <th className="px-4 py-2 font-medium">Scope</th>
                     <th className="px-4 py-2 font-medium">Queries</th>
                     <th className="px-4 py-2 font-medium tabular">Results</th>
                     <th className="px-4 py-2 font-medium tabular">New agencies</th>
@@ -174,11 +122,15 @@ export function SweepsPage() {
 }
 
 function SweepRow({ sweep }: { sweep: Sweep }) {
+  const niche = sweep.keywords[0] ?? '—';
+  const scope = sweep.cities.length === 1 ? sweep.cities[0] : `${sweep.cities.length} cities`;
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
       <td className="px-4 py-3"><StatusBadge status={sweep.status} /></td>
       <td className="px-4 py-3 text-muted-foreground">{fmtRel(sweep.started_at || sweep.created_at)}</td>
-      <td className="px-4 py-3 text-muted-foreground">{sweep.cities.length} cities</td>
+      <td className="px-4 py-3 text-muted-foreground max-w-[18rem] truncate" title={`${niche} · ${sweep.cities.join(', ')}`}>
+        <span className="text-foreground">{niche}</span> · {scope}
+      </td>
       <td className="px-4 py-3 tabular">{sweep.total_queries}</td>
       <td className="px-4 py-3 tabular font-medium">{sweep.total_results}</td>
       <td className="px-4 py-3 tabular font-medium text-primary">+{sweep.new_agencies}</td>
@@ -198,25 +150,36 @@ function StatusBadge({ status }: { status: Sweep['status'] }) {
 }
 
 function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
-  const [selected, setSelected] = useState<string[]>(ALL_GULF_CITIES.map((c) => c.city));
+  const [countries, setCountries] = useState<CountryMeta[]>([]);
+  const [niche, setNiche] = useState('recruitment agency');
+  const [country, setCountry] = useState('AE');
+  const [allCities, setAllCities] = useState(true);
+  const [city, setCity] = useState('');
   const [busy, setBusy] = useState(false);
 
-  function toggle(city: string) {
-    setSelected((s) => s.includes(city) ? s.filter((c) => c !== city) : [...s, city]);
-  }
-  function selectAll()  { setSelected(ALL_GULF_CITIES.map((c) => c.city)); }
-  function selectNone() { setSelected([]); }
+  useEffect(() => {
+    api.get<{ countries: CountryMeta[] }>('/sweeps/countries')
+      .then((d) => setCountries(d.countries))
+      .catch(() => { /* non-fatal — dialog still works with a typed city */ });
+  }, []);
 
-  // Rough plan size estimate. 7 English + 4 Arabic = 11 keywords per city.
-  const queryEstimate = selected.length * 11;
-  const minutesEstimate = Math.max(1, Math.round(queryEstimate / 30));
+  const selected = countries.find((c) => c.code === country);
+  const tiling = !city.trim() && allCities;
+  const cityCount = city.trim() ? 1 : tiling ? Math.max(1, selected?.cities ?? 1) : 1;
+  const queryEstimate = cityCount;                                   // 1 niche keyword per city
+  const minutesEstimate = Math.max(1, Math.round((queryEstimate * 3) / 30)); // ~3 pages / query
 
   async function start() {
-    if (!selected.length) return;
+    if (!niche.trim() || !country) return;
     setBusy(true);
     try {
-      await api.post<{ sweepId: string }>('/sweeps', { cities: selected });
-      toast.success(`Sweep started across ${selected.length} cities`);
+      await api.post('/sweeps', {
+        country,
+        niche: niche.trim(),
+        allCities: tiling,
+        ...(city.trim() ? { city: city.trim() } : {}),
+      });
+      toast.success(`Sweep started: ${niche.trim()} · ${selected?.name || country}`);
       onStarted();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to start sweep');
@@ -225,60 +188,60 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
     }
   }
 
+  const field = 'h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
   return (
-    <DialogContent className="max-w-xl">
+    <DialogContent className="max-w-lg">
       <DialogHeader>
         <DialogTitle>Run a new sweep</DialogTitle>
         <DialogDescription>
-          Discovers Gulf recruitment agencies across the selected cities using Google Maps Places API (New).
+          Discover businesses anywhere via Google Maps — pick a niche and country, and we tile across its major cities.
         </DialogDescription>
       </DialogHeader>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs uppercase tracking-wider text-muted-foreground">Cities</span>
-          <div className="flex gap-2 text-xs">
-            <button type="button" onClick={selectAll}  className="text-primary hover:underline">All</button>
-            <span className="text-muted-foreground">·</span>
-            <button type="button" onClick={selectNone} className="text-muted-foreground hover:text-foreground">None</button>
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <label className="text-xs uppercase tracking-wider text-muted-foreground">Niche / search term</label>
+          <input value={niche} onChange={(e) => setNiche(e.target.value)} placeholder="recruitment agency" className={field} />
+          <p className="text-[11px] text-muted-foreground">e.g. “recruitment agency”, “manpower agency”, “overseas employment”, “construction company”.</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground">Country</label>
+            <select value={country} onChange={(e) => setCountry(e.target.value)} className={field}>
+              {countries.length === 0 && <option value={country}>{country}</option>}
+              {countries.map((c) => (
+                <option key={c.code} value={c.code}>{c.flag} {c.name}{c.cities ? ` (${c.cities})` : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground">Specific city (optional)</label>
+            <input value={city} onChange={(e) => setCity(e.target.value)} placeholder={tiling ? 'All major cities' : 'e.g. Dubai'} className={field} />
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {ALL_GULF_CITIES.map((c) => {
-            const on = selected.includes(c.city);
-            return (
-              <button
-                key={c.city}
-                type="button"
-                onClick={() => toggle(c.city)}
-                className={
-                  'h-9 px-3 rounded-md border text-[13px] flex items-center gap-2 transition-colors ' +
-                  (on
-                    ? 'border-primary bg-primary/10 text-foreground'
-                    : 'border-border bg-card text-muted-foreground hover:bg-muted')
-                }
-              >
-                <span>{FLAG[c.country]}</span>
-                <span className="flex-1 text-left">{c.city}</span>
-                {on && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-              </button>
-            );
-          })}
-        </div>
+
+        {!city.trim() && (
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" checked={allCities} onChange={(e) => setAllCities(e.target.checked)} className="h-4 w-4" />
+            Tile across all {selected?.cities ?? 0} major {selected?.name ? `${selected.name} ` : ''}cities
+          </label>
+        )}
 
         <div className="rounded-md border border-border bg-muted/40 p-3 text-[12px] text-muted-foreground flex items-start gap-2">
           <AlertTriangle className="h-3.5 w-3.5 text-warning mt-0.5 shrink-0" />
           <div>
-            About <strong className="text-foreground">{queryEstimate}</strong> Google Maps queries
-            (~{minutesEstimate} min). Stays inside the free monthly Places tier.
-            Results will appear in the <strong className="text-foreground">Agencies</strong> tab as they're discovered.
+            About <strong className="text-foreground">{queryEstimate}</strong> search{queryEstimate === 1 ? '' : 'es'}
+            {' '}(~{minutesEstimate} min). Stays inside the free monthly Places tier. Results appear in the{' '}
+            <strong className="text-foreground">Agencies</strong> tab as they’re discovered.
           </div>
         </div>
       </div>
 
       <DialogFooter>
         <Button variant="ghost" onClick={onStarted} disabled={busy}>Cancel</Button>
-        <Button onClick={start} disabled={busy || selected.length === 0}>
+        <Button onClick={start} disabled={busy || !niche.trim() || !country}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Start sweep'}
         </Button>
       </DialogFooter>

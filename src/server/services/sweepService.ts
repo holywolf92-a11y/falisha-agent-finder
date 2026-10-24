@@ -6,6 +6,7 @@
 import { db } from '../db.js';
 import { logger } from '../logger.js';
 import { searchText, type PlaceDiscoveryResult } from './placesService.js';
+import { citiesFor, countryName } from './worldCities.js';
 
 // Canonical city grid for sweep discovery. Coordinates verified, radii sized
 // per metro footprint. Add more by editing this list — no schema change.
@@ -82,11 +83,21 @@ const PAGE_SIZE = 20;
 const POLITE_DELAY_MS = 200; // be friendly to Places, well under rate cap
 
 export type SweepInput = {
+  // New mode — sweep ANY country, tiling across its major cities.
+  country?: string;            // ISO alpha-2; drives regionCode + city tiling
+  niche?: string;              // the search term, e.g. "recruitment agency"
+  allCities?: boolean;         // tile across all cities for the country (default)
+  city?: string;               // or a single city name (free text)
+  // Legacy mode — explicit SEED_CITIES names + keyword matrix.
   cities?: string[];           // names from SEED_CITIES.city; omit for ALL
   keywordsEn?: string[];
   keywordsAr?: string[];
   triggeredBy?: string;
 };
+
+// Unified city shape for a sweep. lat/lng/radius are optional — present for the
+// SEED_CITIES grid (locationBias), absent for name-only tiling (query text only).
+type SweepCity = { city: string; country: string; region: string; lat?: number; lng?: number; radius?: number };
 
 export type SweepProgress = {
   sweepId: string;
@@ -103,13 +114,32 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function startSweep(input: SweepInput): Promise<SweepProgress> {
   const sb = db();
 
-  // Resolve city list
-  const cityNames = input.cities && input.cities.length > 0 ? input.cities : SEED_CITIES.map((c) => c.city);
-  const cities = SEED_CITIES.filter((c) => cityNames.includes(c.city));
-  const keywordsEn = input.keywordsEn ?? KEYWORDS_EN;
-  const keywordsAr = input.keywordsAr ?? KEYWORDS_AR;
+  // Resolve the sweep plan — new country/niche mode, or legacy SEED_CITIES matrix.
+  let cities: SweepCity[];
+  let keywordsEn: string[];
+  let keywordsAr: string[];
+  let languages: string[];
 
-  // Estimate plan size up-front for UI
+  if (input.country) {
+    const cc = input.country.toUpperCase();
+    const niche = (input.niche || '').trim() || 'recruitment agency';
+    let names: string[];
+    if (input.city && input.city.trim()) names = [input.city.trim()];
+    else names = citiesFor(cc);
+    if (names.length === 0) names = ['']; // no city list → one country-level query
+    cities = names.slice(0, 40).map((name) => ({ city: name, country: cc, region: cc }));
+    keywordsEn = [niche];
+    keywordsAr = [];
+    languages = ['en'];
+  } else {
+    const cityNames = input.cities && input.cities.length > 0 ? input.cities : SEED_CITIES.map((c) => c.city);
+    cities = SEED_CITIES.filter((c) => cityNames.includes(c.city)).map((c) => ({ ...c }));
+    keywordsEn = input.keywordsEn ?? KEYWORDS_EN;
+    keywordsAr = input.keywordsAr ?? KEYWORDS_AR;
+    languages = ['en', 'ar'];
+  }
+
+  const cityLabels = cities.map((c) => c.city || countryName(c.country));
   const totalQueries = cities.length * (keywordsEn.length + keywordsAr.length);
 
   // Create sweep row
@@ -117,9 +147,9 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
     .from('sweeps')
     .insert({
       status: 'running',
-      cities: cityNames,
+      cities: cityLabels,
       keywords: [...keywordsEn, ...keywordsAr],
-      languages: ['en', 'ar'],
+      languages,
       started_at: new Date().toISOString(),
       triggered_by: input.triggeredBy ?? null,
       total_queries: totalQueries,
@@ -131,7 +161,7 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
   }
 
   const sweepId = sweepRow.id as string;
-  logger.info({ sweepId, totalQueries }, 'sweep_started');
+  logger.info({ sweepId, totalQueries, mode: input.country ? 'country' : 'legacy' }, 'sweep_started');
 
   // Fire-and-forget execution
   void runSweep(sweepId, cities, keywordsEn, keywordsAr);
@@ -148,7 +178,7 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
 
 async function runSweep(
   sweepId: string,
-  cities: ReadonlyArray<(typeof GULF_CITIES)[number]>,
+  cities: SweepCity[],
   keywordsEn: string[],
   keywordsAr: string[],
 ): Promise<void> {
@@ -161,6 +191,7 @@ async function runSweep(
   let fatalError: string | null = null;
 
   for (const city of cities) {
+    const cityLabel = city.city || countryName(city.country);
     for (const { keywords, language } of [
       { keywords: keywordsEn, language: 'en' },
       { keywords: keywordsAr, language: 'ar' },
@@ -175,13 +206,13 @@ async function runSweep(
 
         try {
           do {
-            const queryText = language === 'ar'
-              ? `${keyword} ${city.city}`
-              : `${keyword} ${city.city}`;
+            const queryText = `${keyword} ${cityLabel}`.trim();
 
             const { results, nextPageToken } = await searchText({
               query: queryText,
-              locationBias: { lat: city.lat, lng: city.lng, radius: city.radius },
+              locationBias: (city.lat != null && city.lng != null && city.radius != null)
+                ? { lat: city.lat, lng: city.lng, radius: city.radius }
+                : undefined,
               pageToken,
               languageCode: language,
               regionCode: city.region,
@@ -204,7 +235,7 @@ async function runSweep(
 
         await sb.from('sweep_queries').insert({
           sweep_id: sweepId,
-          city: city.city,
+          city: cityLabel,
           keyword,
           language,
           region_code: city.region,
