@@ -14,6 +14,7 @@ export interface AgencyFilter {
   minScore?: number;
   enrichmentStatus?: 'not_enriched' | 'enriched' | 'failed' | 'in_progress';
   contactable?: Contactable;
+  stage?: string; // outreach_stage (Phase 4 CRM)
 }
 
 /**
@@ -29,6 +30,7 @@ export function applyAgencyFilters<T>(qb: T, f: AgencyFilter): T {
   if (f.category) q = q.eq('category', f.category);
   if (f.city) q = q.ilike('city', f.city);
   if (f.enrichmentStatus) q = q.eq('enrichment_status', f.enrichmentStatus);
+  if (f.stage) q = q.eq('outreach_stage', f.stage);
   if (f.minRating != null) q = q.gte('rating', f.minRating);
   if (f.minReviews != null) q = q.gte('review_count', f.minReviews);
   if (f.minScore != null) q = q.gte('score', f.minScore);

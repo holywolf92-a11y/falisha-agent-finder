@@ -42,6 +42,7 @@ interface AgencyContacts {
   wa_phone?: string | null;
   wa_undeliverable_at?: string | null;
   last_template_sent_at?: string | null;
+  outreach_stage?: string | null;
   agency_phones?: PhoneRow[];
   agency_emails?: Array<{ id: string }>;
   agency_socials?: SocialRow[];
@@ -187,7 +188,7 @@ export async function sendTemplate(opts: {
   const dryRun = Boolean(opts.dryRun);
 
   const select =
-    'id, name, country_code, wa_phone, wa_undeliverable_at, last_template_sent_at,' +
+    'id, name, country_code, wa_phone, wa_undeliverable_at, last_template_sent_at, outreach_stage,' +
     ' agency_phones(phone, phone_type)';
 
   let qb = sb.from('agencies').select(select).is('deleted_at', null).limit(SEND_CAP);
@@ -236,6 +237,10 @@ export async function sendTemplate(opts: {
         .update({
           last_template_sent_at: new Date().toISOString(),
           template_send_count: (await currentSendCount(a.id)) + 1,
+          // Advance a brand-new lead to "contacted" (never downgrade a warmer stage).
+          ...(a.outreach_stage === 'new' || a.outreach_stage == null
+            ? { outreach_stage: 'contacted', outreach_stage_at: new Date().toISOString() }
+            : {}),
         })
         .eq('id', a.id);
       // Flag the conversation human-only so the portal's candidate AI bot won't

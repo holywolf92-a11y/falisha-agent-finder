@@ -53,6 +53,7 @@ type Agency = {
   last_template_sent_at: string | null;
   template_send_count: number | null;
   wa_undeliverable_at: string | null;
+  outreach_stage: string | null;
   agency_phones?: AgencyPhone[];
   agency_socials?: AgencySocial[];
 };
@@ -103,6 +104,15 @@ const SORT = [
   { value: 'score',  label: 'Sort: Partner-fit' },
   { value: 'recent', label: 'Sort: Newest' },
 ];
+const STAGES = [
+  { value: '',               label: 'Any stage' },
+  { value: 'new',            label: 'New' },
+  { value: 'contacted',      label: 'Contacted' },
+  { value: 'replied',        label: 'Replied' },
+  { value: 'interested',     label: 'Interested' },
+  { value: 'not_interested', label: 'Not interested' },
+  { value: 'converted',      label: 'Converted' },
+];
 
 type SendSummary = {
   dryRun: boolean;
@@ -140,6 +150,7 @@ export function AgenciesPage() {
 
   // ── Phase 1 outreach state ──────────────────────────────────────────────────
   const [contactable, setContactable] = useState('');
+  const [stage, setStage] = useState('');
   const [sort, setSort] = useState('rating');
   const [findingWa, setFindingWa] = useState(false);
   const [waConfig, setWaConfig] = useState<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string } | null>(null);
@@ -156,7 +167,7 @@ export function AgenciesPage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, sort]);
+  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, sort]);
 
   // Is WhatsApp outreach wired up? Drives the Send-template button's enabled state.
   useEffect(() => {
@@ -176,13 +187,14 @@ export function AgenciesPage() {
       ...(minReviews       ? { minReviews }       : {}),
       ...(enrichmentStatus ? { enrichmentStatus } : {}),
       ...(contactable      ? { contactable }      : {}),
+      ...(stage            ? { stage }            : {}),
     });
     api.get<{ agencies: Agency[]; total: number }>(`/agencies?${params.toString()}`)
       .then((d) => { if (!cancelled) { setAgencies(d.agencies); setTotal(d.total); } })
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, sort, page, refreshNonce]);
+  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, sort, page, refreshNonce]);
 
   // ─── Auto-scrape orchestration ─────────────────────────────────────────────
   // On mount, peek scrape status. If a run is active, poll its progress and
@@ -327,6 +339,7 @@ export function AgenciesPage() {
       ...(minReviews       ? { minReviews: Number(minReviews) } : {}),
       ...(enrichmentStatus ? { enrichmentStatus }               : {}),
       ...(contactable      ? { contactable }                    : {}),
+      ...(stage            ? { stage }                          : {}),
     };
   }
 
@@ -466,10 +479,11 @@ export function AgenciesPage() {
         <FilterSelect value={minReviews}       onChange={setMinReviews}       options={MIN_REVIEWS} />
         <FilterSelect value={enrichmentStatus} onChange={setEnrichmentStatus} options={ENRICHMENT} />
         <FilterSelect value={contactable}      onChange={setContactable}      options={CONTACTABLE} />
+        <FilterSelect value={stage}            onChange={setStage}            options={STAGES} />
         <FilterSelect value={sort}             onChange={setSort}             options={SORT} />
-        {(country || minRating || minReviews || enrichmentStatus || contactable || q) && (
+        {(country || minRating || minReviews || enrichmentStatus || contactable || stage || q) && (
           <Button variant="ghost" size="sm" onClick={() => {
-            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setQ('');
+            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setStage(''); setQ('');
           }}>
             <Filter className="h-3 w-3" /> Clear
           </Button>
@@ -515,11 +529,12 @@ export function AgenciesPage() {
                     <th className="px-3 py-2 font-medium">Social</th>
                     <th className="px-3 py-2 font-medium">Type</th>
                     <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium">Stage</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && agencies.length === 0 && (
-                    <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
                   )}
                   {agencies.map((a) => {
                     const phone = bestPhone(a.agency_phones);
@@ -564,6 +579,9 @@ export function AgenciesPage() {
                               : a.enrichment_status === 'in_progress'
                                 ? <Badge pulse>Running</Badge>
                                 : <Badge variant="secondary">Pending</Badge>}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <StageBadge stage={a.outreach_stage} />
                         </td>
                       </tr>
                     );
@@ -928,6 +946,22 @@ function ScoreBadge({ score, tier }: { score: number | null; tier: 'high' | 'med
       title={`Partner-fit ${score}/100`}
     >
       {score}
+    </span>
+  );
+}
+
+function StageBadge({ stage }: { stage: string | null }) {
+  if (!stage || stage === 'new') return <span className="text-muted-foreground">—</span>;
+  const cls: Record<string, string> = {
+    contacted:      'bg-muted text-foreground border-border',
+    replied:        'bg-primary/10 text-primary border-primary/30',
+    interested:     'bg-success/15 text-success border-success/30',
+    not_interested: 'bg-muted text-muted-foreground border-border',
+    converted:      'bg-success/20 text-success border-success/40 font-semibold',
+  };
+  return (
+    <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium capitalize ${cls[stage] ?? 'bg-muted text-muted-foreground border-border'}`}>
+      {stage.replace(/_/g, ' ')}
     </span>
   );
 }

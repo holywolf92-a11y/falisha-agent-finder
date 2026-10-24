@@ -17,6 +17,7 @@ const querySchema = z.object({
   minScore:         z.coerce.number().int().min(0).max(100).optional(),
   enrichmentStatus: z.enum(['not_enriched', 'enriched', 'failed', 'in_progress']).optional(),
   contactable:      z.enum(['has', 'whatsapp', 'mobile', 'landline', 'none']).optional(),
+  stage:            z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
   sort:             z.enum(['rating', 'score', 'recent']).default('rating'),
   page:             z.coerce.number().int().min(0).default(0),
   pageSize:         z.coerce.number().int().min(1).max(200).default(50),
@@ -37,7 +38,7 @@ agenciesRouter.get('/', async (req, res) => {
     .select(
       `id, name, country_code, city, address, category, website,
        rating, review_count, business_status, enrichment_status, last_sweep_at,
-       score, score_tier, wa_phone, primary_phone_type,
+       score, score_tier, wa_phone, primary_phone_type, outreach_stage,
        last_template_sent_at, template_send_count, wa_undeliverable_at,
        agency_phones (phone, phone_type),
        agency_socials (platform, url)`,
@@ -91,4 +92,20 @@ agenciesRouter.get('/:id', async (req, res) => {
     reviews: reviews.data ?? [],
     outreach: outreach.data ?? [],
   });
+});
+
+// PATCH /api/agencies/:id — update the CRM pipeline stage / notes.
+const patchSchema = z.object({
+  outreach_stage: z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
+  outreach_notes: z.string().max(5000).optional(),
+});
+agenciesRouter.patch('/:id', async (req, res) => {
+  const parsed = patchSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_payload' });
+  const updates: Record<string, unknown> = { ...parsed.data };
+  if (parsed.data.outreach_stage) updates.outreach_stage_at = new Date().toISOString();
+  if (Object.keys(updates).length === 0) return res.json({ ok: true });
+  const { error } = await db().from('agencies').update(updates).eq('id', String(req.params.id));
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
 });
