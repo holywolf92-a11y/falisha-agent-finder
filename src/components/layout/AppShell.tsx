@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Building2, LayoutDashboard, Radar, Send, Settings, LogOut, Search, Sun, Moon,
+  Building2, LayoutDashboard, Radar, MessageSquare, Settings, LogOut, Search, Sun, Moon,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -15,7 +15,7 @@ const NAV = [
   { to: '/',          label: 'Dashboard', icon: LayoutDashboard },
   { to: '/agencies',  label: 'Agencies',  icon: Building2 },
   { to: '/sweeps',    label: 'Sweeps',    icon: Radar },
-  { to: '/outreach',  label: 'Outreach',  icon: Send },
+  { to: '/outreach',  label: 'Inbox',     icon: MessageSquare },
   { to: '/settings',  label: 'Settings',  icon: Settings },
 ] as const;
 

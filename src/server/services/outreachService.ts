@@ -20,6 +20,7 @@ import {
   META_RATE_LIMITS,
   isConfigured,
 } from './whatsappCloud.js';
+import { markConversationHuman } from './inboxService.js';
 
 const FIND_CAP = 1000;       // max agencies processed by one Find WhatsApp run
 const SEND_CAP = 250;        // max sends in one bulk call (safety ceiling)
@@ -237,6 +238,9 @@ export async function sendTemplate(opts: {
           template_send_count: (await currentSendCount(a.id)) + 1,
         })
         .eq('id', a.id);
+      // Flag the conversation human-only so the portal's candidate AI bot won't
+      // auto-reply when this agency responds to our cold template.
+      await markConversationHuman(to);
       summary.sent += 1;
     } catch (err) {
       const e = err as WhatsAppSendError;
