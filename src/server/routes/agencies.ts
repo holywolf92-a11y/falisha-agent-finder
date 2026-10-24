@@ -41,6 +41,7 @@ agenciesRouter.get('/', async (req, res) => {
        score, score_tier, wa_phone, primary_phone_type, outreach_stage,
        last_template_sent_at, template_send_count, wa_undeliverable_at,
        agency_phones (phone, phone_type),
+       agency_emails (email),
        agency_socials (platform, url)`,
       { count: 'exact' },
     )

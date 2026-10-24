@@ -347,11 +347,14 @@ export async function sendEmail(opts: {
     const emails = a.agency_emails ?? [];
     if (!emails.length) { summary.skipped.no_email += 1; continue; }
     if (recent.has(a.id)) { summary.skipped.recently_contacted += 1; continue; }
-    // Best email: verified first, then highest confidence.
-    const best = [...emails].sort(
+    // Send to ALL of the agency's emails (verified / high-confidence first),
+    // deduped and capped — one email reaching every contact at that agency.
+    const sorted = [...emails].sort(
       (x, y) => (Number(y.verified) - Number(x.verified)) || ((y.confidence ?? 0) - (x.confidence ?? 0)),
-    )[0];
-    const to = best.email;
+    );
+    const recipients = [...new Set(sorted.map((e) => (e.email || '').trim().toLowerCase()).filter(Boolean))].slice(0, 5);
+    if (!recipients.length) { summary.skipped.no_email += 1; continue; }
+    const to = recipients.join(', ');
 
     if (dryRun) { summary.wouldSend += 1; continue; }
 

@@ -55,6 +55,7 @@ type Agency = {
   wa_undeliverable_at: string | null;
   outreach_stage: string | null;
   agency_phones?: AgencyPhone[];
+  agency_emails?: { email: string }[];
   agency_socials?: AgencySocial[];
 };
 
@@ -616,7 +617,7 @@ export function AgenciesPage() {
                           <ScoreBadge score={a.score} tier={a.score_tier} />
                         </td>
                         <td className="px-3 py-1.5">
-                          <ContactCell phone={phone?.phone ?? null} website={a.website} waHref={wa} telHref={tel} />
+                          <ContactCell phone={phone?.phone ?? null} website={a.website} waHref={wa} telHref={tel} emails={a.agency_emails} />
                         </td>
                         <td className="px-3 py-1.5">
                           <WaCell agency={a} />
@@ -999,16 +1000,18 @@ function SocialCell({ socials }: { socials: AgencySocial[] | undefined }) {
 }
 
 function ContactCell({
-  phone, website, waHref, telHref,
+  phone, website, waHref, telHref, emails,
 }: {
   phone: string | null;
   website: string | null;
   waHref: string | null;
   telHref: string | null;
+  emails?: { email: string }[];
 }) {
-  if (!phone && !website) return <span className="text-muted-foreground">—</span>;
+  const emailList = emails ?? [];
+  if (!phone && !website && emailList.length === 0) return <span className="text-muted-foreground">—</span>;
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-col gap-0.5">
       {phone && (
         <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px]">
           <span className="text-foreground">{fmtPhone(phone)}</span>
@@ -1028,11 +1031,19 @@ function ContactCell({
           )}
         </span>
       )}
+      {emailList.length > 0 && (
+        <span className="inline-flex items-center gap-1 text-[11.5px]" title={emailList.map((e) => e.email).join(', ')}>
+          <Mail className="h-3 w-3 text-muted-foreground shrink-0" />
+          <a href={`mailto:${emailList[0].email}`} onClick={(e) => e.stopPropagation()}
+             className="text-foreground hover:underline truncate max-w-[13rem]">{emailList[0].email}</a>
+          {emailList.length > 1 && <span className="text-muted-foreground shrink-0">+{emailList.length - 1}</span>}
+        </span>
+      )}
       {website && (
         <a href={website} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-           className="h-5 w-5 rounded inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted ml-1"
+           className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground hover:text-foreground"
            title="Open website">
-          <Globe className="h-3 w-3" />
+          <Globe className="h-3 w-3" /> website
         </a>
       )}
     </div>
