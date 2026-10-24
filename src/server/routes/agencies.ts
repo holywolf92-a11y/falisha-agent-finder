@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdmin } from './auth.js';
 import { db } from '../db.js';
+import { applyAgencyFilters } from '../services/agencyFilters.js';
 
 export const agenciesRouter = Router();
 agenciesRouter.use(requireAdmin);
@@ -10,9 +11,13 @@ const querySchema = z.object({
   q:                z.string().optional(),
   country:          z.string().optional(),
   category:         z.string().optional(),
+  city:             z.string().optional(),
   minRating:        z.coerce.number().min(0).max(5).optional(),
   minReviews:       z.coerce.number().int().min(0).optional(),
+  minScore:         z.coerce.number().int().min(0).max(100).optional(),
   enrichmentStatus: z.enum(['not_enriched', 'enriched', 'failed', 'in_progress']).optional(),
+  contactable:      z.enum(['has', 'whatsapp', 'mobile', 'landline', 'none']).optional(),
+  sort:             z.enum(['rating', 'score', 'recent']).default('rating'),
   page:             z.coerce.number().int().min(0).default(0),
   pageSize:         z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -20,35 +25,38 @@ const querySchema = z.object({
 agenciesRouter.get('/', async (req, res) => {
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_query' });
-  const { q, country, category, minRating, minReviews, enrichmentStatus, page, pageSize } = parsed.data;
+  const { sort, page, pageSize, ...filter } = parsed.data;
 
-  // Embed first phones inline so the Agencies table can show contact info
+  // Embed phones + socials inline so the Agencies table can show contact info
   // without one extra round-trip per row. Supabase resource embedding does the
-  // JOIN server-side; the response shape is `{ ..., agency_phones: [...] }`.
+  // JOIN server-side; the response shape is `{ ..., agency_phones: [...],
+  // agency_socials: [...] }`. The outreach fields (score, wa_phone, …) drive the
+  // partner-fit column, the contactable filter and the Send-template targeting.
   let qb = db()
     .from('agencies')
     .select(
       `id, name, country_code, city, address, category, website,
        rating, review_count, business_status, enrichment_status, last_sweep_at,
-       agency_phones (phone, phone_type)`,
+       score, score_tier, wa_phone, primary_phone_type,
+       last_template_sent_at, template_send_count, wa_undeliverable_at,
+       agency_phones (phone, phone_type),
+       agency_socials (platform, url)`,
       { count: 'exact' },
     )
-    .is('deleted_at', null)
-    // Sort by rating then review_count so a 4.5★ × 200-review agency outranks
-    // a 5★ × 1-review (vanity) listing. This is the priority order admins want.
-    .order('rating',       { ascending: false, nullsFirst: false })
-    .order('review_count', { ascending: false })
-    .range(page * pageSize, page * pageSize + pageSize - 1);
+    .is('deleted_at', null);
 
-  if (country)          qb = qb.eq('country_code', country.toLowerCase());
-  if (category)         qb = qb.eq('category', category);
-  if (enrichmentStatus) qb = qb.eq('enrichment_status', enrichmentStatus);
-  if (minRating != null) qb = qb.gte('rating', minRating);
-  if (minReviews != null) qb = qb.gte('review_count', minReviews);
-  if (q && q.trim()) {
-    const term = q.trim().replace(/[%,()]/g, ' ');
-    qb = qb.or(`name.ilike.%${term}%,address.ilike.%${term}%`);
+  qb = applyAgencyFilters(qb, filter);
+
+  if (sort === 'score') {
+    qb = qb.order('score', { ascending: false, nullsFirst: false });
+  } else if (sort === 'recent') {
+    qb = qb.order('last_sweep_at', { ascending: false, nullsFirst: false });
+  } else {
+    // Rating then review_count so a 4.5★ × 200-review agency outranks a 5★ × 1.
+    qb = qb.order('rating', { ascending: false, nullsFirst: false }).order('review_count', { ascending: false });
   }
+
+  qb = qb.range(page * pageSize, page * pageSize + pageSize - 1);
 
   const { data, error, count } = await qb;
   if (error) return res.status(500).json({ error: error.message });

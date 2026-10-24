@@ -22,6 +22,15 @@ const schema = z.object({
 
   // CORS: comma-separated list of allowed origins; leave empty to allow same-origin only
   CORS_ALLOWED_ORIGINS: z.string().optional(),
+
+  // WhatsApp Cloud API (Meta) — reuses the same credentials the Falisha portal
+  // backend already uses. All optional: when absent, outreach endpoints report
+  // "not configured" and the UI disables Send-template.
+  WHATSAPP_ACCESS_TOKEN:    z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_WABA_ID:         z.string().optional(), // needed to list templates
+  WHATSAPP_GRAPH_VERSION:   z.string().default('v20.0'),
+  WHATSAPP_TEMPLATE_LANG:   z.string().default('en'),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -10,7 +10,7 @@ import { AgencyDrawer } from '@/components/app/AgencyDrawer';
 import { QuotaWidget, refreshQuota, useQuota } from '@/components/app/QuotaWidget';
 import {
   Building2, Search, Star, ChevronLeft, ChevronRight, Sparkles, Loader2, Filter,
-  Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2,
+  Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2, Send, Smartphone,
   Linkedin, Facebook, Instagram, Youtube, Twitter, Music2,
   type LucideIcon,
 } from 'lucide-react';
@@ -45,6 +45,14 @@ type Agency = {
   business_status: string | null;
   enrichment_status: string;
   last_sweep_at: string | null;
+  // Phase 1 outreach fields (populated by "Find WhatsApp" + the scorer)
+  score: number | null;
+  score_tier: 'high' | 'medium' | 'low' | null;
+  wa_phone: string | null;
+  primary_phone_type: 'mobile' | 'landline' | 'unknown' | null;
+  last_template_sent_at: string | null;
+  template_send_count: number | null;
+  wa_undeliverable_at: string | null;
   agency_phones?: AgencyPhone[];
   agency_socials?: AgencySocial[];
 };
@@ -83,6 +91,29 @@ const ENRICHMENT = [
   { value: 'enriched',     label: 'Already enriched' },
   { value: 'failed',       label: 'Enrichment failed' },
 ];
+const CONTACTABLE = [
+  { value: '',         label: 'Any contactability' },
+  { value: 'whatsapp', label: '💬 WhatsApp-reachable' },
+  { value: 'mobile',   label: '📱 Mobile number' },
+  { value: 'landline', label: '☎️ Landline only' },
+  { value: 'none',     label: 'No WhatsApp found' },
+];
+const SORT = [
+  { value: 'rating', label: 'Sort: Rating' },
+  { value: 'score',  label: 'Sort: Partner-fit' },
+  { value: 'recent', label: 'Sort: Newest' },
+];
+
+type SendSummary = {
+  dryRun: boolean;
+  targeted: number;
+  sent: number;
+  failed: number;
+  stoppedEarly: boolean;
+  skipped: { no_whatsapp: number; known_dead: number; recently_contacted: number };
+  wouldSend: number;
+};
+type WaTemplate = { name: string; language: string; status: string; category: string };
 
 export function AgenciesPage() {
   const [country, setCountry] = useState('');
@@ -107,30 +138,50 @@ export function AgenciesPage() {
   const scrapeStateRef = useRef<ScrapeRunState | null>(null);
   const quotas = useQuota();
 
+  // ── Phase 1 outreach state ──────────────────────────────────────────────────
+  const [contactable, setContactable] = useState('');
+  const [sort, setSort] = useState('rating');
+  const [findingWa, setFindingWa] = useState(false);
+  const [waConfig, setWaConfig] = useState<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string } | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [templates, setTemplates] = useState<WaTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [sendPreview, setSendPreview] = useState<SendSummary | null>(null);
+  const [sending, setSending] = useState(false);
+
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q), 250);
     return () => clearTimeout(t);
   }, [q]);
 
-  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus]);
+  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, sort]);
+
+  // Is WhatsApp outreach wired up? Drives the Send-template button's enabled state.
+  useEffect(() => {
+    api.get<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string }>('/outreach/config')
+      .then(setWaConfig)
+      .catch(() => setWaConfig({ configured: false, templatesConfigured: false, defaultLanguage: 'en' }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     const params = new URLSearchParams({
-      page: String(page), pageSize: String(pageSize),
+      page: String(page), pageSize: String(pageSize), sort,
       ...(country          ? { country }          : {}),
       ...(debounced        ? { q: debounced }     : {}),
       ...(minRating        ? { minRating }        : {}),
       ...(minReviews       ? { minReviews }       : {}),
       ...(enrichmentStatus ? { enrichmentStatus } : {}),
+      ...(contactable      ? { contactable }      : {}),
     });
     api.get<{ agencies: Agency[]; total: number }>(`/agencies?${params.toString()}`)
       .then((d) => { if (!cancelled) { setAgencies(d.agencies); setTotal(d.total); } })
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [debounced, country, minRating, minReviews, enrichmentStatus, page, refreshNonce]);
+  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, sort, page, refreshNonce]);
 
   // ─── Auto-scrape orchestration ─────────────────────────────────────────────
   // On mount, peek scrape status. If a run is active, poll its progress and
@@ -264,6 +315,83 @@ export function AgenciesPage() {
     }
   }
 
+  // ── Phase 1 outreach handlers ───────────────────────────────────────────────
+  // The exact filter the user sees — so Find WhatsApp / Send template act on the
+  // same set the table shows.
+  function currentFilter() {
+    return {
+      ...(debounced        ? { q: debounced }                   : {}),
+      ...(country          ? { country }                        : {}),
+      ...(minRating        ? { minRating: Number(minRating) }   : {}),
+      ...(minReviews       ? { minReviews: Number(minReviews) } : {}),
+      ...(enrichmentStatus ? { enrichmentStatus }               : {}),
+      ...(contactable      ? { contactable }                    : {}),
+    };
+  }
+
+  async function runFindWhatsApp() {
+    setFindingWa(true);
+    try {
+      const r = await api.post<{ summary: { processed: number; withWhatsApp: number; mobile: number; landline: number } }>(
+        '/outreach/find-whatsapp', { filter: currentFilter() },
+      );
+      const s = r.summary;
+      toast.success(`Checked ${s.processed} · ${s.withWhatsApp} WhatsApp-reachable · ${s.mobile} mobile · ${s.landline} landline`);
+      setRefreshNonce((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Find WhatsApp failed');
+    } finally {
+      setFindingWa(false);
+    }
+  }
+
+  async function openSendModal() {
+    setSendOpen(true);
+    setSendPreview(null);
+    setTemplateName('');
+    setTemplatesLoading(true);
+    try {
+      const [t, preview] = await Promise.all([
+        api.get<{ templates: WaTemplate[] }>('/outreach/templates').catch(() => ({ templates: [] as WaTemplate[] })),
+        api.post<{ summary: SendSummary }>('/outreach/send-template', {
+          filter: currentFilter(), templateName: '__preview__', dryRun: true,
+        }).catch(() => null),
+      ]);
+      const approved = (t.templates || []).filter((x) => x.status === 'APPROVED');
+      const list = approved.length ? approved : (t.templates || []);
+      setTemplates(list);
+      if (list.length === 1) setTemplateName(list[0].name);
+      if (preview) setSendPreview(preview.summary);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }
+
+  async function confirmSend() {
+    if (!templateName) { toast.error('Pick a template first'); return; }
+    const tmpl = templates.find((t) => t.name === templateName);
+    setSending(true);
+    try {
+      const r = await api.post<{ summary: SendSummary }>('/outreach/send-template', {
+        filter: currentFilter(),
+        templateName,
+        language: tmpl?.language || waConfig?.defaultLanguage || 'en',
+        dryRun: false,
+      });
+      const s = r.summary;
+      const skipped = s.skipped.no_whatsapp + s.skipped.known_dead + s.skipped.recently_contacted;
+      toast.success(
+        `Sent ${s.sent}${s.failed ? ` · ${s.failed} failed` : ''}${s.stoppedEarly ? ' · stopped early (rate limit)' : ''}${skipped ? ` · skipped ${skipped}` : ''}`,
+      );
+      setSendOpen(false);
+      setRefreshNonce((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Send failed');
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -297,6 +425,25 @@ export function AgenciesPage() {
               ? <><Loader2 className="h-4 w-4 animate-spin" /> Enriching…</>
               : <><Sparkles className="h-4 w-4" /> Enrich filtered</>}
           </Button>
+          <Button
+            onClick={runFindWhatsApp}
+            disabled={findingWa || total === 0}
+            variant="outline"
+            title="Classify each number (mobile/landline) and resolve the best WhatsApp-reachable number — free, no API cost"
+          >
+            {findingWa
+              ? <><Loader2 className="h-4 w-4 animate-spin" /> Finding…</>
+              : <><Smartphone className="h-4 w-4" /> Find WhatsApp</>}
+          </Button>
+          <Button
+            onClick={openSendModal}
+            disabled={total === 0 || !waConfig?.configured}
+            title={waConfig?.configured
+              ? 'Send an approved WhatsApp template to the filtered agencies'
+              : 'WhatsApp Cloud API is not configured on this service yet'}
+          >
+            <Send className="h-4 w-4" /> Send template
+          </Button>
         </div>
       </div>
 
@@ -316,9 +463,11 @@ export function AgenciesPage() {
         <FilterSelect value={minRating}        onChange={setMinRating}        options={MIN_RATINGS} />
         <FilterSelect value={minReviews}       onChange={setMinReviews}       options={MIN_REVIEWS} />
         <FilterSelect value={enrichmentStatus} onChange={setEnrichmentStatus} options={ENRICHMENT} />
-        {(country || minRating || minReviews || enrichmentStatus || q) && (
+        <FilterSelect value={contactable}      onChange={setContactable}      options={CONTACTABLE} />
+        <FilterSelect value={sort}             onChange={setSort}             options={SORT} />
+        {(country || minRating || minReviews || enrichmentStatus || contactable || q) && (
           <Button variant="ghost" size="sm" onClick={() => {
-            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setQ('');
+            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setQ('');
           }}>
             <Filter className="h-3 w-3" /> Clear
           </Button>
@@ -358,7 +507,9 @@ export function AgenciesPage() {
                     <th className="px-3 py-2 font-medium">Agency</th>
                     <th className="px-3 py-2 font-medium">Country</th>
                     <th className="px-3 py-2 font-medium">Rating</th>
+                    <th className="px-3 py-2 font-medium">Fit</th>
                     <th className="px-3 py-2 font-medium">Contact</th>
+                    <th className="px-3 py-2 font-medium">WhatsApp</th>
                     <th className="px-3 py-2 font-medium">Social</th>
                     <th className="px-3 py-2 font-medium">Type</th>
                     <th className="px-3 py-2 font-medium">Status</th>
@@ -366,7 +517,7 @@ export function AgenciesPage() {
                 </thead>
                 <tbody>
                   {loading && agencies.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
                   )}
                   {agencies.map((a) => {
                     const phone = bestPhone(a.agency_phones);
@@ -391,7 +542,13 @@ export function AgenciesPage() {
                           ) : <span className="text-muted-foreground">—</span>}
                         </td>
                         <td className="px-3 py-1.5">
+                          <ScoreBadge score={a.score} tier={a.score_tier} />
+                        </td>
+                        <td className="px-3 py-1.5">
                           <ContactCell phone={phone?.phone ?? null} website={a.website} waHref={wa} telHref={tel} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <WaCell agency={a} />
                         </td>
                         <td className="px-3 py-1.5">
                           <SocialCell socials={a.agency_socials} />
@@ -484,6 +641,70 @@ export function AgenciesPage() {
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>Cancel</Button>
             <Button onClick={confirmAndEnrich} disabled={planned === 0}>
               {planned === 0 ? 'Quota exhausted' : `Enrich ${planned.toLocaleString()}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send template dialog */}
+      <Dialog open={sendOpen} onOpenChange={setSendOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send WhatsApp template</DialogTitle>
+            <DialogDescription>
+              Sends an approved WhatsApp template to the agencies matching your current filters.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-muted-foreground">Template</label>
+              {templatesLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading templates…</div>
+              ) : templates.length === 0 ? (
+                <p className="text-[12px] text-warning bg-warning/10 border border-warning/30 rounded p-2">
+                  No templates found. Set <code>WHATSAPP_WABA_ID</code> on this service and approve a marketing
+                  template in Meta Business Manager, then reopen this dialog.
+                </p>
+              ) : (
+                <select
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="">Select a template…</option>
+                  {templates.map((t) => (
+                    <option key={t.name + t.language} value={t.name}>
+                      {t.name} · {t.language} · {t.category}{t.status !== 'APPROVED' ? ` (${t.status})` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <Row label="Matching agencies" value={total.toLocaleString()} />
+            {sendPreview && (
+              <>
+                <Row label="Will receive the template" value={sendPreview.wouldSend.toLocaleString()} highlight />
+                <div className="text-[12px] text-muted-foreground space-y-0.5">
+                  <p>Skipped: {sendPreview.skipped.no_whatsapp} no WhatsApp · {sendPreview.skipped.known_dead} known-dead · {sendPreview.skipped.recently_contacted} messaged recently.</p>
+                  <p className="flex items-center gap-1"><Smartphone className="h-3 w-3" /> Run "Find WhatsApp" first to resolve more reachable numbers.</p>
+                </div>
+              </>
+            )}
+            <p className="text-[12px] text-warning bg-warning/10 border border-warning/30 rounded p-2">
+              This sends real WhatsApp messages to businesses. Dead numbers are remembered and skipped, and each
+              agency is only re-messaged after 14 days. Capped at 250 per run.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSendOpen(false)}>Cancel</Button>
+            <Button
+              onClick={confirmSend}
+              disabled={sending || !templateName || (sendPreview?.wouldSend ?? 0) === 0}
+            >
+              {sending
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending…</>
+                : <><Send className="h-4 w-4" /> Send to {(sendPreview?.wouldSend ?? 0).toLocaleString()}</>}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -677,4 +898,48 @@ function ContactCell({
       )}
     </div>
   );
+}
+
+function ScoreBadge({ score, tier }: { score: number | null; tier: 'high' | 'medium' | 'low' | null }) {
+  if (score == null) return <span className="text-muted-foreground">—</span>;
+  const cls =
+    tier === 'high'   ? 'bg-success/15 text-success border-success/30'
+    : tier === 'medium' ? 'bg-warning/15 text-warning border-warning/30'
+    :                     'bg-muted text-muted-foreground border-border';
+  return (
+    <span
+      className={`inline-flex items-center justify-center min-w-[2rem] rounded border px-1.5 py-0.5 text-[11px] font-semibold tabular ${cls}`}
+      title={`Partner-fit ${score}/100`}
+    >
+      {score}
+    </span>
+  );
+}
+
+function WaCell({ agency }: { agency: Agency }) {
+  if (agency.wa_undeliverable_at) {
+    return <Badge variant="destructive" title="Meta reported this number isn't on WhatsApp">Not on WA</Badge>;
+  }
+  if (agency.wa_phone) {
+    const sent = (agency.template_send_count ?? 0) > 0;
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <a
+          href={whatsAppHref(agency.wa_phone) ?? undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 text-success hover:underline"
+          title="Open WhatsApp chat"
+        >
+          <MessageSquare className="h-3 w-3" /> Reachable
+        </a>
+        {sent && <Badge variant="secondary" title={`Template sent ${agency.template_send_count}×`}>sent</Badge>}
+      </span>
+    );
+  }
+  if (agency.primary_phone_type === 'landline') {
+    return <span className="text-muted-foreground inline-flex items-center gap-1"><PhoneIcon className="h-3 w-3" /> Landline</span>;
+  }
+  return <span className="text-muted-foreground">—</span>;
 }
