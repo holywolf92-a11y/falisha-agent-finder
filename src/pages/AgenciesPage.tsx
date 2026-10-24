@@ -147,6 +147,7 @@ export function AgenciesPage() {
   const [templates, setTemplates] = useState<WaTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templateName, setTemplateName] = useState('');
+  const [templateLang, setTemplateLang] = useState('en');
   const [sendPreview, setSendPreview] = useState<SendSummary | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -349,6 +350,7 @@ export function AgenciesPage() {
     setSendOpen(true);
     setSendPreview(null);
     setTemplateName('');
+    setTemplateLang(waConfig?.defaultLanguage || 'en');
     setTemplatesLoading(true);
     try {
       const [t, preview] = await Promise.all([
@@ -375,7 +377,7 @@ export function AgenciesPage() {
       const r = await api.post<{ summary: SendSummary }>('/outreach/send-template', {
         filter: currentFilter(),
         templateName,
-        language: tmpl?.language || waConfig?.defaultLanguage || 'en',
+        language: tmpl?.language || templateLang || waConfig?.defaultLanguage || 'en',
         dryRun: false,
       });
       const s = r.summary;
@@ -661,10 +663,24 @@ export function AgenciesPage() {
               {templatesLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading templates…</div>
               ) : templates.length === 0 ? (
-                <p className="text-[12px] text-warning bg-warning/10 border border-warning/30 rounded p-2">
-                  No templates found. Set <code>WHATSAPP_WABA_ID</code> on this service and approve a marketing
-                  template in Meta Business Manager, then reopen this dialog.
-                </p>
+                <div className="space-y-2">
+                  <p className="text-[12px] text-muted-foreground">
+                    Couldn't list templates (set <code>WHATSAPP_WABA_ID</code> to get a dropdown). Type an approved
+                    template's exact name + language code to send:
+                  </p>
+                  <input
+                    value={templateName}
+                    onChange={(e) => setTemplateName(e.target.value)}
+                    placeholder="template_name (e.g. agency_intro)"
+                    className="h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                  <input
+                    value={templateLang}
+                    onChange={(e) => setTemplateLang(e.target.value)}
+                    placeholder="language code (e.g. en, en_US, ar)"
+                    className="h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                </div>
               ) : (
                 <select
                   value={templateName}
