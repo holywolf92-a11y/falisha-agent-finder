@@ -124,6 +124,14 @@ type SendSummary = {
   wouldSend: number;
 };
 type WaTemplate = { name: string; language: string; status: string; category: string };
+type EmailSummary = {
+  dryRun: boolean;
+  targeted: number;
+  sent: number;
+  failed: number;
+  skipped: { no_email: number; recently_contacted: number };
+  wouldSend: number;
+};
 
 export function AgenciesPage() {
   const [country, setCountry] = useState('');
@@ -153,7 +161,7 @@ export function AgenciesPage() {
   const [stage, setStage] = useState('');
   const [sort, setSort] = useState('rating');
   const [findingWa, setFindingWa] = useState(false);
-  const [waConfig, setWaConfig] = useState<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string } | null>(null);
+  const [waConfig, setWaConfig] = useState<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string; emailConfigured: boolean; emailFrom: string | null } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [templates, setTemplates] = useState<WaTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -161,6 +169,11 @@ export function AgenciesPage() {
   const [templateLang, setTemplateLang] = useState('en');
   const [sendPreview, setSendPreview] = useState<SendSummary | null>(null);
   const [sending, setSending] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [emailPreview, setEmailPreview] = useState<EmailSummary | null>(null);
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q), 250);
@@ -171,9 +184,9 @@ export function AgenciesPage() {
 
   // Is WhatsApp outreach wired up? Drives the Send-template button's enabled state.
   useEffect(() => {
-    api.get<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string }>('/outreach/config')
+    api.get<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string; emailConfigured: boolean; emailFrom: string | null }>('/outreach/config')
       .then(setWaConfig)
-      .catch(() => setWaConfig({ configured: false, templatesConfigured: false, defaultLanguage: 'en' }));
+      .catch(() => setWaConfig({ configured: false, templatesConfigured: false, defaultLanguage: 'en', emailConfigured: false, emailFrom: null }));
   }, []);
 
   useEffect(() => {
@@ -407,6 +420,37 @@ export function AgenciesPage() {
     }
   }
 
+  async function openEmailModal() {
+    setEmailOpen(true);
+    setEmailPreview(null);
+    // Dry-run preview of who would receive (subject/body are placeholders here).
+    try {
+      const preview = await api.post<{ summary: EmailSummary }>('/outreach/send-email', {
+        filter: currentFilter(), subject: 'preview', body: 'preview', dryRun: true,
+      });
+      setEmailPreview(preview.summary);
+    } catch { /* non-fatal */ }
+  }
+
+  async function confirmSendEmail() {
+    if (!emailSubject.trim() || !emailBody.trim()) { toast.error('Add a subject and body'); return; }
+    setSendingEmail(true);
+    try {
+      const r = await api.post<{ summary: EmailSummary }>('/outreach/send-email', {
+        filter: currentFilter(), subject: emailSubject.trim(), body: emailBody, dryRun: false,
+      });
+      const s = r.summary;
+      const skipped = s.skipped.no_email + s.skipped.recently_contacted;
+      toast.success(`Emailed ${s.sent}${s.failed ? ` · ${s.failed} failed` : ''}${skipped ? ` · skipped ${skipped}` : ''}`);
+      setEmailOpen(false);
+      setRefreshNonce((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Email failed');
+    } finally {
+      setSendingEmail(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -458,6 +502,16 @@ export function AgenciesPage() {
               : 'WhatsApp Cloud API is not configured on this service yet'}
           >
             <Send className="h-4 w-4" /> Send template
+          </Button>
+          <Button
+            onClick={openEmailModal}
+            disabled={total === 0 || !waConfig?.emailConfigured}
+            variant="outline"
+            title={waConfig?.emailConfigured
+              ? `Email the filtered agencies from ${waConfig.emailFrom ?? 'your Workspace address'}`
+              : 'Email (SMTP) is not configured on this service yet'}
+          >
+            <Mail className="h-4 w-4" /> Send email
           </Button>
         </div>
       </div>
@@ -739,6 +793,57 @@ export function AgenciesPage() {
               {sending
                 ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending…</>
                 : <><Send className="h-4 w-4" /> Send to {(sendPreview?.wouldSend ?? 0).toLocaleString()}</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send email dialog */}
+      <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send email</DialogTitle>
+            <DialogDescription>
+              Emails the agencies matching your current filters{waConfig?.emailFrom ? `, from ${waConfig.emailFrom}` : ''}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <input
+              value={emailSubject}
+              onChange={(e) => setEmailSubject(e.target.value)}
+              placeholder="Subject"
+              className="h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <textarea
+              value={emailBody}
+              onChange={(e) => setEmailBody(e.target.value)}
+              rows={8}
+              placeholder="Write your message…"
+              className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+            />
+            <Row label="Matching agencies" value={total.toLocaleString()} />
+            {emailPreview && (
+              <>
+                <Row label="Will receive the email" value={emailPreview.wouldSend.toLocaleString()} highlight />
+                <div className="text-[12px] text-muted-foreground">
+                  Skipped: {emailPreview.skipped.no_email} no email · {emailPreview.skipped.recently_contacted} emailed recently.
+                </div>
+              </>
+            )}
+            <p className="text-[12px] text-warning bg-warning/10 border border-warning/30 rounded p-2">
+              Sends real emails from your Workspace account. Gmail has daily send limits and bulk cold email can hurt
+              deliverability — keep batches modest. Agencies emailed in the last 14 days are skipped.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEmailOpen(false)}>Cancel</Button>
+            <Button
+              onClick={confirmSendEmail}
+              disabled={sendingEmail || !emailSubject.trim() || !emailBody.trim() || (emailPreview?.wouldSend ?? 0) === 0}
+            >
+              {sendingEmail
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending…</>
+                : <><Mail className="h-4 w-4" /> Send to {(emailPreview?.wouldSend ?? 0).toLocaleString()}</>}
             </Button>
           </DialogFooter>
         </DialogContent>

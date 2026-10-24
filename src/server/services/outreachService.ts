@@ -21,6 +21,7 @@ import {
   isConfigured,
 } from './whatsappCloud.js';
 import { markConversationHuman } from './inboxService.js';
+import { sendEmail as cloudSendEmail, isEmailConfigured } from './emailService.js';
 
 const FIND_CAP = 1000;       // max agencies processed by one Find WhatsApp run
 const SEND_CAP = 250;        // max sends in one bulk call (safety ceiling)
@@ -276,6 +277,124 @@ export async function sendTemplate(opts: {
   }
 
   logger.info(summary, 'send_template done');
+  return summary;
+}
+
+// ── Email outreach ────────────────────────────────────────────────────────────
+
+export interface EmailSendSummary {
+  dryRun: boolean;
+  targeted: number;
+  sent: number;
+  failed: number;
+  skipped: { no_email: number; recently_contacted: number };
+  wouldSend: number;
+}
+
+type EmailAgencyRow = {
+  id: string;
+  name?: string | null;
+  outreach_stage?: string | null;
+  agency_emails?: Array<{ email: string; confidence: number | null; verified: boolean }>;
+};
+
+/** Send an email (Workspace SMTP) to one agency or the filtered set. */
+export async function sendEmail(opts: {
+  agencyId?: string;
+  filter?: AgencyFilter;
+  subject: string;
+  body: string;
+  dryRun?: boolean;
+  triggeredBy?: string;
+}): Promise<EmailSendSummary> {
+  if (!isEmailConfigured()) throw new Error('Email not configured');
+  const sb = db();
+  const dryRun = Boolean(opts.dryRun);
+
+  const select = 'id, name, outreach_stage, agency_emails(email, confidence, verified)';
+  let qb = sb.from('agencies').select(select).is('deleted_at', null).limit(SEND_CAP);
+  if (opts.agencyId) qb = qb.eq('id', opts.agencyId);
+  else qb = applyAgencyFilters(qb, opts.filter ?? {});
+  const { data, error } = await qb;
+  if (error) throw new Error(`send_email query failed: ${error.message}`);
+  const rows = (data ?? []) as unknown as EmailAgencyRow[];
+
+  // Dedup: agencies emailed within DEDUP_DAYS are skipped.
+  const ids = rows.map((r) => r.id);
+  const recent = new Set<string>();
+  if (ids.length) {
+    const since = new Date(Date.now() - DEDUP_DAYS * 24 * 3600 * 1000).toISOString();
+    const { data: recentRows } = await sb
+      .from('agency_outreach')
+      .select('agency_id')
+      .eq('channel', 'email')
+      .in('status', ['sent', 'delivered'])
+      .gte('sent_at', since)
+      .in('agency_id', ids);
+    for (const r of (recentRows ?? []) as Array<{ agency_id: string }>) recent.add(r.agency_id);
+  }
+
+  const summary: EmailSendSummary = {
+    dryRun,
+    targeted: rows.length,
+    sent: 0,
+    failed: 0,
+    skipped: { no_email: 0, recently_contacted: 0 },
+    wouldSend: 0,
+  };
+
+  for (const a of rows) {
+    const emails = a.agency_emails ?? [];
+    if (!emails.length) { summary.skipped.no_email += 1; continue; }
+    if (recent.has(a.id)) { summary.skipped.recently_contacted += 1; continue; }
+    // Best email: verified first, then highest confidence.
+    const best = [...emails].sort(
+      (x, y) => (Number(y.verified) - Number(x.verified)) || ((y.confidence ?? 0) - (x.confidence ?? 0)),
+    )[0];
+    const to = best.email;
+
+    if (dryRun) { summary.wouldSend += 1; continue; }
+
+    try {
+      const { messageId } = await cloudSendEmail(to, opts.subject, opts.body);
+      await sb.from('agency_outreach').insert({
+        agency_id: a.id,
+        channel: 'email',
+        direction: 'outbound',
+        subject: opts.subject,
+        body: opts.body,
+        to_email: to,
+        provider: 'gmail_smtp',
+        provider_message_id: messageId || null,
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+        triggered_by: opts.triggeredBy ?? 'admin',
+      });
+      if (a.outreach_stage === 'new' || a.outreach_stage == null) {
+        await sb.from('agencies')
+          .update({ outreach_stage: 'contacted', outreach_stage_at: new Date().toISOString() })
+          .eq('id', a.id);
+      }
+      summary.sent += 1;
+    } catch (err) {
+      await sb.from('agency_outreach').insert({
+        agency_id: a.id,
+        channel: 'email',
+        direction: 'outbound',
+        subject: opts.subject,
+        to_email: to,
+        provider: 'gmail_smtp',
+        status: 'failed',
+        status_reason: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        failed_at: new Date().toISOString(),
+        triggered_by: opts.triggeredBy ?? 'admin',
+      });
+      summary.failed += 1;
+    }
+    await sleep(SEND_DELAY_MS);
+  }
+
+  logger.info(summary, 'send_email done');
   return summary;
 }
 

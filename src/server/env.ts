@@ -31,6 +31,15 @@ const schema = z.object({
   WHATSAPP_WABA_ID:         z.string().optional(), // needed to list templates
   WHATSAPP_GRAPH_VERSION:   z.string().default('v20.0'),
   WHATSAPP_TEMPLATE_LANG:   z.string().default('en'),
+
+  // Email outreach via Google Workspace SMTP (Gmail). All optional: when absent,
+  // the Send-email action is disabled. SMTP_USER is the Workspace address
+  // (info@falishamanpower.com); SMTP_PASSWORD is a Gmail App Password.
+  SMTP_HOST:      z.string().default('smtp.gmail.com'),
+  SMTP_PORT:      z.coerce.number().int().positive().default(587),
+  SMTP_USER:      z.string().optional(),
+  SMTP_PASSWORD:  z.string().optional(),
+  SMTP_FROM_NAME: z.string().default('Falisha Manpower'),
 });
 
 const parsed = schema.safeParse(process.env);

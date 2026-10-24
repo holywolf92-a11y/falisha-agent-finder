@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdmin } from './auth.js';
-import { findWhatsApp, sendTemplate } from '../services/outreachService.js';
+import { findWhatsApp, sendTemplate, sendEmail } from '../services/outreachService.js';
 import {
   listTemplates,
   isConfigured,
@@ -9,6 +9,7 @@ import {
   defaultTemplateLanguage,
   WhatsAppSendError,
 } from '../services/whatsappCloud.js';
+import { isEmailConfigured, emailFrom } from '../services/emailService.js';
 
 export const outreachRouter = Router();
 outreachRouter.use(requireAdmin);
@@ -32,6 +33,8 @@ outreachRouter.get('/config', (_req, res) => {
     configured: isConfigured(),
     templatesConfigured: templatesConfigured(),
     defaultLanguage: defaultTemplateLanguage(),
+    emailConfigured: isEmailConfigured(),
+    emailFrom: isEmailConfigured() ? emailFrom() : null,
   });
 });
 
@@ -97,5 +100,36 @@ outreachRouter.post('/send-template', async (req, res) => {
     }
     const msg = err instanceof Error ? err.message : String(err);
     return res.status(500).json({ error: 'send_failed', detail: msg });
+  }
+});
+
+// POST /api/outreach/send-email — email one agency or the filtered set.
+const sendEmailSchema = z
+  .object({
+    agencyId: z.string().optional(),
+    filter: filterSchema.optional(),
+    subject: z.string().min(1).max(300),
+    body: z.string().min(1).max(20000),
+    dryRun: z.boolean().optional(),
+  })
+  .refine((v) => v.agencyId || v.filter, { message: 'agencyId or filter required' });
+
+outreachRouter.post('/send-email', async (req, res) => {
+  const parsed = sendEmailSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', detail: parsed.error.message });
+  if (!isEmailConfigured()) return res.status(409).json({ error: 'not_configured', detail: 'Email (SMTP) is not set up.' });
+  try {
+    const summary = await sendEmail({
+      agencyId: parsed.data.agencyId,
+      filter: parsed.data.filter,
+      subject: parsed.data.subject,
+      body: parsed.data.body,
+      dryRun: parsed.data.dryRun,
+      triggeredBy: 'admin',
+    });
+    return res.json({ ok: true, summary });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: 'email_failed', detail: msg });
   }
 });
