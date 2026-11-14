@@ -170,6 +170,9 @@ const STRONG: RegExp[] = [
   /recruit/, /man ?-?power/, /staffing/, /head ?hunt/, /executive search/, /employment agenc/, /overseas employment/,
   /lab(ou|o)r supply/, /[اإأآ]ستقدام/, /توظيف/, /عمالة/, /istihdam/, /işe alım|ise alim/, /zapošljavanj|zaposljavanj|запошљавањ/,
   /regrutacij|регрутациј/, /подбор персонала|кадровое агентство/,
+  // How Turkish / Serbian agencies describe their own business
+  /personel temin|eleman bul|özel istihdam|ozel istihdam|insan kaynakları danışman|insan kaynaklari danisman|yurt ?dışı istihdam/,
+  /posredovanj\S* u zapošljavanj|agencij\S* za zapošljavanj|посредовањ\S* у запошљавањ|агенциј\S* за запошљавањ/,
 ];
 
 /**
@@ -202,6 +205,9 @@ export async function classifyByHomepage(website: string, priorPos = 0, timeoutM
     // Hide only with ≥2 distinct non-recruitment signals: one stray word ("hospital"
     // on a Gulf "Management Consultancy" agency page) is not enough.
     if (priorPos === 0 && strong === 0 && p.total <= 1 && n.total >= 5) return { verdict: 'not_recruitment', reason, pos: p.total, neg: n.total };
+    // Name, Google type, domain AND a readable homepage all silent about recruitment,
+    // beyond at most one weak word (a "kariyer"/"personel" menu link): not an agency.
+    if (priorPos === 0 && strong === 0 && p.total <= 2) return { verdict: 'not_recruitment', reason: `${reason} · homepage never describes a recruitment business`, pos: p.total, neg: n.total };
     return { verdict: 'review', reason, pos: p.total, neg: n.total };
   } catch {
     return null;
