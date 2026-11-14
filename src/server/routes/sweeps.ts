@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from './auth.js';
 import { startSweep, listSweeps } from '../services/sweepService.js';
 import { SWEEP_COUNTRIES, citiesFor } from '../services/worldCities.js';
+import { termsFor, districtLabelsFor } from '../services/sweepKeywords.js';
 import { logger } from '../logger.js';
 
 export const sweepsRouter = Router();
@@ -14,6 +15,8 @@ const startSchema = z.object({
   niche:     z.string().optional(),
   allCities: z.boolean().optional(),
   city:      z.string().optional(),
+  localTerms: z.boolean().optional(),
+  districts:  z.boolean().optional(),
   // Legacy SEED_CITIES mode
   cities:     z.array(z.string()).optional(),
   keywordsEn: z.array(z.string()).optional(),
@@ -22,7 +25,14 @@ const startSchema = z.object({
 
 // Country catalogue for the sweep dialog (code, name, flag, #cities we can tile).
 sweepsRouter.get('/countries', (_req, res) => {
-  res.json({ countries: SWEEP_COUNTRIES.map((c) => ({ ...c, cities: citiesFor(c.code).length })) });
+  res.json({
+    countries: SWEEP_COUNTRIES.map((c) => ({
+      ...c,
+      cities: citiesFor(c.code).length,
+      districts: districtLabelsFor(c.code).length,
+      terms: termsFor(c.code),
+    })),
+  });
 });
 
 sweepsRouter.get('/', async (_req, res) => {

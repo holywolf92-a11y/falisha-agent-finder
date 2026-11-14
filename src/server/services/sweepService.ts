@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 import { searchText, type PlaceDiscoveryResult } from './placesService.js';
 import { citiesFor, countryName } from './worldCities.js';
 import { classifyAgency } from './relevanceService.js';
+import { termsFor, districtLabelsFor, type Term } from './sweepKeywords.js';
 
 // Canonical city grid for sweep discovery. Coordinates verified, radii sized
 // per metro footprint. Add more by editing this list — no schema change.
@@ -89,6 +90,8 @@ export type SweepInput = {
   niche?: string;              // the search term, e.g. "recruitment agency"
   allCities?: boolean;         // tile across all cities for the country (default)
   city?: string;               // or a single city name (free text)
+  localTerms?: boolean;        // use the country's local-language term pack (default true)
+  districts?: boolean;         // also search big cities district-by-district (default true)
   // Legacy mode — explicit SEED_CITIES names + keyword matrix.
   cities?: string[];           // names from SEED_CITIES.city; omit for ALL
   keywordsEn?: string[];
@@ -112,36 +115,45 @@ export type SweepProgress = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * The search terms for a country sweep: the country's local-language pack
+ * (unless disabled) plus the typed niche, de-duplicated. With the pack off, just
+ * the niche in English (the old behaviour).
+ */
+export function planTerms(cc: string, niche: string, local: boolean): Term[] {
+  const out: Term[] = local ? [...termsFor(cc)] : [];
+  if (!out.some((t) => t.keyword.toLowerCase() === niche.toLowerCase())) out.push({ keyword: niche, language: 'en' });
+  return out;
+}
+
 export async function startSweep(input: SweepInput): Promise<SweepProgress> {
   const sb = db();
 
   // Resolve the sweep plan — new country/niche mode, or legacy SEED_CITIES matrix.
   let cities: SweepCity[];
-  let keywordsEn: string[];
-  let keywordsAr: string[];
-  let languages: string[];
+  let terms: Term[];
 
   if (input.country) {
     const cc = input.country.toUpperCase();
     const niche = (input.niche || '').trim() || 'recruitment agency';
+    terms = planTerms(cc, niche, input.localTerms !== false);
     let names: string[];
     if (input.city && input.city.trim()) names = [input.city.trim()];
-    else names = citiesFor(cc);
+    else names = [...citiesFor(cc), ...(input.districts !== false ? districtLabelsFor(cc) : [])];
     if (names.length === 0) names = ['']; // no city list → one country-level query
-    cities = names.slice(0, 40).map((name) => ({ city: name, country: cc, region: cc }));
-    keywordsEn = [niche];
-    keywordsAr = [];
-    languages = ['en'];
+    cities = names.slice(0, 250).map((name) => ({ city: name, country: cc, region: cc }));
   } else {
     const cityNames = input.cities && input.cities.length > 0 ? input.cities : SEED_CITIES.map((c) => c.city);
     cities = SEED_CITIES.filter((c) => cityNames.includes(c.city)).map((c) => ({ ...c }));
-    keywordsEn = input.keywordsEn ?? KEYWORDS_EN;
-    keywordsAr = input.keywordsAr ?? KEYWORDS_AR;
-    languages = ['en', 'ar'];
+    terms = [
+      ...(input.keywordsEn ?? KEYWORDS_EN).map((keyword) => ({ keyword, language: 'en' })),
+      ...(input.keywordsAr ?? KEYWORDS_AR).map((keyword) => ({ keyword, language: 'ar' })),
+    ];
   }
 
   const cityLabels = cities.map((c) => c.city || countryName(c.country));
-  const totalQueries = cities.length * (keywordsEn.length + keywordsAr.length);
+  const totalQueries = cities.length * terms.length;
+  const languages = [...new Set(terms.map((t) => t.language))];
 
   // Create sweep row
   const { data: sweepRow, error: sweepErr } = await sb
@@ -149,7 +161,7 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
     .insert({
       status: 'running',
       cities: cityLabels,
-      keywords: [...keywordsEn, ...keywordsAr],
+      keywords: terms.map((t) => t.keyword),
       languages,
       started_at: new Date().toISOString(),
       triggered_by: input.triggeredBy ?? null,
@@ -165,7 +177,7 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
   logger.info({ sweepId, totalQueries, mode: input.country ? 'country' : 'legacy' }, 'sweep_started');
 
   // Fire-and-forget execution
-  void runSweep(sweepId, cities, keywordsEn, keywordsAr);
+  void runSweep(sweepId, cities, terms);
 
   return {
     sweepId,
@@ -180,8 +192,7 @@ export async function startSweep(input: SweepInput): Promise<SweepProgress> {
 async function runSweep(
   sweepId: string,
   cities: SweepCity[],
-  keywordsEn: string[],
-  keywordsAr: string[],
+  terms: Term[],
 ): Promise<void> {
   const sb = db();
   const t0 = Date.now();
@@ -193,11 +204,8 @@ async function runSweep(
 
   for (const city of cities) {
     const cityLabel = city.city || countryName(city.country);
-    for (const { keywords, language } of [
-      { keywords: keywordsEn, language: 'en' },
-      { keywords: keywordsAr, language: 'ar' },
-    ]) {
-      for (const keyword of keywords) {
+    {
+      for (const { keyword, language } of terms) {
         const queryStart = Date.now();
         let pageIndex = 0;
         let pageToken: string | undefined;

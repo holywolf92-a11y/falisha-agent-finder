@@ -30,8 +30,8 @@ const POSITIVE: Array<[RegExp, number]> = [
   [/insan kay?a?nak/, 3], [/istihdam/, 3], [/işe alım|ise alim/, 3], [/iş bulma|is bulma/, 3], [/yurt ?dışı iş\b|yurtdisi is\b/, 3],
   [/personel/, 2], [/eleman/, 2], [/işçi|isci/, 2], [/işgücü|isgucu/, 2], [/bakıcı|bakici/, 2], [/kariyer/, 1],
   // Serbian (Latin + Cyrillic)
-  [/zapošlj|zaposlj|запошљ/, 3], [/regrut|регрут/, 3], [/ljudsk\w* resurs|људск\w* ресурс/, 3],
-  [/radn\w* snag|радн\w* снаг/, 3], [/rad u inostranstv|рад у иностранств/, 3],
+  [/zapošlj|zaposlj|запошљ/, 3], [/regrut|регрут/, 3], [/ljudsk\S* resurs|људск\S* ресурс/, 3],
+  [/radn\S* snag|радн\S* снаг/, 3], [/rad u inostranstv|рад у иностранств/, 3],
   [/posredovanj|посредовањ/, 2], [/kadrov|кадров/, 2], [/\bposao\b|\bposlovi\b|посао|послови/, 1],
   // Russian (Central Asia / Belarus markets)
   [/кадров|персонал|трудоустрой|рекрут|подбор персонала/, 3], [/вакансии|работа за рубежом/, 2],
@@ -85,9 +85,16 @@ function score(text: string, table: Array<[RegExp, number]>): { total: number; h
   return { total, hits };
 }
 
+// State / municipal employment services. Their names are full of recruitment words
+// ("Nacionalna služba za zapošljavanje", "İŞKUR", "Agentur für Arbeit") but they are
+// public bodies, not private agencies we can partner with — always hidden.
+const PUBLIC_EMPLOYMENT = /nacionaln\S* služb\S* za zapošlj|nacionaln\S* sluzb\S* za zaposlj|национал\S* служб\S* за запошљ|državn\S* služb\S* za zapošlj|државн\S* служб\S* за запошљ|biro za nezaposlen|zavod za zapošljavanje|завод за запошљавање|\bnsz\b|işkur|iskur|türkiye iş kurumu|turkiye is kurumu|\bibb\b|istihdam ofisi|belediye\S* istihdam|agentur für arbeit|agentur fur arbeit|jobcenter|anofm|agenția (județeană|națională) pentru ocuparea|агенция по заетостта|služba za zapošljavanje|public employment service|government employment|مكتب العمل|وزارة العمل|وزارة الموارد البشرية|صندوق تنمية الموارد البشرية/;
+
 /** Stage 1–3: name + Google types + website domain. Cheap, no network. */
 export function classifyAgency(a: { name: string; google_categories?: string[] | null; category?: string | null; website?: string | null }): Classification {
   const name = norm(a.name || '');
+  const pub = name.match(PUBLIC_EMPLOYMENT);
+  if (pub) return { verdict: 'not_recruitment', reason: `public employment service: ${pub[0]}`, pos: 0, neg: 9 };
   const types = new Set([...(a.google_categories ?? []), ...(a.category ? [a.category] : [])]);
   const p = score(name, POSITIVE);
   const n = score(name, NEGATIVE);

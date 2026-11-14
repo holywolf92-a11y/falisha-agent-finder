@@ -26,7 +26,11 @@ type Sweep = {
   created_at: string;
 };
 
-type CountryMeta = { code: string; name: string; flag: string; cities: number };
+type CountryMeta = {
+  code: string; name: string; flag: string; cities: number;
+  districts?: number;                                   // big-city districts searched separately
+  terms?: Array<{ keyword: string; language: string }>; // local-language search-term pack
+};
 
 export function SweepsPage() {
   const [sweeps, setSweeps] = useState<Sweep[]>([]);
@@ -154,6 +158,8 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
   const [niche, setNiche] = useState('recruitment agency');
   const [country, setCountry] = useState('AE');
   const [allCities, setAllCities] = useState(true);
+  const [localTerms, setLocalTerms] = useState(true);
+  const [districts, setDistricts] = useState(true);
   const [city, setCity] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -165,9 +171,17 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
 
   const selected = countries.find((c) => c.code === country);
   const tiling = !city.trim() && allCities;
-  const cityCount = city.trim() ? 1 : tiling ? Math.max(1, selected?.cities ?? 1) : 1;
-  const queryEstimate = cityCount;                                   // 1 niche keyword per city
-  const minutesEstimate = Math.max(1, Math.round((queryEstimate * 3) / 30)); // ~3 pages / query
+  const districtCount = tiling && districts ? (selected?.districts ?? 0) : 0;
+  const cityCount = city.trim() ? 1 : tiling ? Math.max(1, (selected?.cities ?? 1) + districtCount) : 1;
+  const packTerms = localTerms ? (selected?.terms ?? []) : [];
+  const termList = [...packTerms.map((t) => t.keyword), ...(packTerms.some((t) => t.keyword.toLowerCase() === niche.trim().toLowerCase()) || !niche.trim() ? [] : [niche.trim()])];
+  const termCount = Math.max(1, termList.length);
+  const queryEstimate = cityCount * termCount;
+  // Google returns up to 3 pages per search; small cities usually need 1. Billed per page
+  // (Text Search Enterprise: first 1,000/month free, then ~$35 per 1,000).
+  const requestEstimate = Math.round(queryEstimate * 1.4);
+  const costEstimate = Math.max(0, Math.round(((requestEstimate - 1000) * 35) / 1000));
+  const minutesEstimate = Math.max(1, Math.round((requestEstimate * 0.6) / 60));
 
   async function start() {
     if (!niche.trim() || !country) return;
@@ -177,6 +191,8 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
         country,
         niche: niche.trim(),
         allCities: tiling,
+        localTerms,
+        districts,
         ...(city.trim() ? { city: city.trim() } : {}),
       });
       toast.success(`Sweep started: ${niche.trim()} · ${selected?.name || country}`);
@@ -228,13 +244,33 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
             Tile across all {selected?.cities ?? 0} major {selected?.name ? `${selected.name} ` : ''}cities
           </label>
         )}
+        {tiling && (selected?.districts ?? 0) > 0 && (
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" checked={districts} onChange={(e) => setDistricts(e.target.checked)} className="h-4 w-4" />
+            Also search {selected?.districts} districts of the biggest cities (Google shows max 60 per search)
+          </label>
+        )}
+        {(selected?.terms?.length ?? 0) > 0 && (
+          <div className="space-y-1">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input type="checkbox" checked={localTerms} onChange={(e) => setLocalTerms(e.target.checked)} className="h-4 w-4" />
+              Use local-language search terms (recommended)
+            </label>
+            {localTerms && (
+              <p className="text-[11px] text-muted-foreground pl-6">{termList.join(' · ')}</p>
+            )}
+          </div>
+        )}
 
         <div className="rounded-md border border-border bg-muted/40 p-3 text-[12px] text-muted-foreground flex items-start gap-2">
           <AlertTriangle className="h-3.5 w-3.5 text-warning mt-0.5 shrink-0" />
           <div>
-            About <strong className="text-foreground">{queryEstimate}</strong> search{queryEstimate === 1 ? '' : 'es'}
-            {' '}(~{minutesEstimate} min). Stays inside the free monthly Places tier. Results appear in the{' '}
-            <strong className="text-foreground">Agencies</strong> tab as they’re discovered.
+            About <strong className="text-foreground">{queryEstimate.toLocaleString()}</strong> search{queryEstimate === 1 ? '' : 'es'}
+            {' '}({cityCount} places × {termCount} term{termCount === 1 ? '' : 's'}, ~{minutesEstimate} min).{' '}
+            {costEstimate > 0
+              ? <>Roughly <strong className="text-foreground">${costEstimate}</strong> of Google Places usage beyond the 1,000 free monthly searches.</>
+              : <>Fits in the 1,000 free monthly Places searches.</>}
+            {' '}Non-agencies are filtered out automatically; results appear in the <strong className="text-foreground">Agencies</strong> tab.
           </div>
         </div>
       </div>
