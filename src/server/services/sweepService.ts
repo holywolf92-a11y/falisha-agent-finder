@@ -319,6 +319,7 @@ async function upsertDiscoveryResults(
     latitude:          r.location?.latitude ?? null,
     longitude:         r.location?.longitude ?? null,
     category:          r.primaryType,
+    website:           r.websiteUri,
     google_categories: r.types,
     business_status:   r.businessStatus,
     rating:            r.rating,
@@ -335,15 +336,30 @@ async function upsertDiscoveryResults(
     // (the update below doesn't touch relevance), so manual corrections stick.
     const checkedAt = new Date().toISOString();
     const withFirstSweep = newRows.map((r) => {
-      const c = classifyAgency({ name: r.name, google_categories: r.google_categories, category: r.category });
+      const c = classifyAgency({ name: r.name, google_categories: r.google_categories, category: r.category, website: r.website });
       return {
         ...r, first_sweep_id: sweepId,
         relevance: c.verdict, relevance_reason: c.reason, relevance_source: 'auto', relevance_checked_at: checkedAt,
       };
     });
-    const { error } = await sb.from('agencies').upsert(withFirstSweep, { onConflict: 'google_place_id' });
+    const { data: inserted, error } = await sb.from('agencies')
+      .upsert(withFirstSweep, { onConflict: 'google_place_id' })
+      .select('id, google_place_id');
     if (error) {
       logger.error({ err: error.message }, 'agencies_insert_failed');
+    } else {
+      // Phone came free with the search (same SKU) — store it like enrichment would.
+      const idByPlace = new Map((inserted ?? []).map((x: { id: string; google_place_id: string }) => [x.google_place_id, x.id]));
+      const phoneRows = results
+        .filter((r) => r.phone && idByPlace.has(r.id))
+        .map((r) => ({
+          agency_id: idByPlace.get(r.id), phone: r.phone, phone_normalized: String(r.phone).replace(/[^\d+]/g, ''),
+          phone_type: 'main', source: 'google_maps',
+        }));
+      if (phoneRows.length) {
+        const { error: pErr } = await sb.from('agency_phones').upsert(phoneRows, { onConflict: 'agency_id,phone_normalized,phone_type', ignoreDuplicates: true });
+        if (pErr) logger.warn({ err: pErr.message }, 'agency_phones_insert_failed');
+      }
     }
   }
 

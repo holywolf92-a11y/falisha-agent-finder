@@ -27,6 +27,10 @@ const DISCOVERY_MASK = [
   'places.businessStatus',
   'places.rating',
   'places.userRatingCount',
+  // Same Text Search *Enterprise* SKU as rating/userRatingCount above, so these cost
+  // nothing extra — and save a Place Details call (and its own bill) per agency later.
+  'places.websiteUri',
+  'places.internationalPhoneNumber',
   'nextPageToken',
 ].join(',');
 
@@ -58,6 +62,8 @@ export type PlaceDiscoveryResult = {
   rating: number | null;
   userRatingCount: number | null;
   location: { latitude: number; longitude: number } | null;
+  websiteUri: string | null;
+  phone: string | null;
 };
 
 export type PlaceDetails = {
@@ -99,6 +105,8 @@ type RawSearchResponse = {
     rating?: number;
     userRatingCount?: number;
     location?: { latitude?: number; longitude?: number };
+    websiteUri?: string;
+    internationalPhoneNumber?: string;
   }>;
   nextPageToken?: string;
 };
@@ -160,6 +168,8 @@ export async function searchText(args: {
     location: p.location?.latitude != null && p.location?.longitude != null
       ? { latitude: p.location.latitude, longitude: p.location.longitude }
       : null,
+    websiteUri: p.websiteUri ?? null,
+    phone: p.internationalPhoneNumber ?? null,
   }));
 
   return { results: places.filter((p) => p.id), nextPageToken: data.nextPageToken };

@@ -18,7 +18,7 @@ const norm = (s: string) => s.toLowerCase().normalize('NFKC').replace(/̇/g, '')
 // [pattern, weight] — matched against lowercased name (and homepage text).
 const POSITIVE: Array<[RegExp, number]> = [
   // English
-  [/recruit/, 3], [/man ?-?power/, 3], [/staffing/, 3], [/head ?hunt/, 3], [/human resource/, 3],
+  [/recruit/, 3], [/man ?-?power/, 3], [/staffing/, 3], [/head ?hunt/, 3], [/executive search/, 3], [/human resource/, 3],
   [/employment (agency|agencies|bureau|services?|solutions?|office)/, 3], [/overseas employment/, 3],
   [/lab(ou|o)r (supply|supplier|services?|contract)/, 3], [/workforce/, 2], [/\bhr\b/, 2], [/\bhrd\b/, 2],
   [/placement/, 2], [/personnel/, 2], [/\bhiring\b|\bhire/, 2], [/\bjobs?\b/, 2], [/talent/, 2], [/\blab(ou|o)r\b/, 2],
@@ -27,7 +27,8 @@ const POSITIVE: Array<[RegExp, number]> = [
   [/[اإأآ]ستقدام/, 3], [/توظيف/, 3],   // every alef spelling: استقدام / إستقدام / أستقدام [/عمالة|(^|\s)(ال)?عمال(\s|$)/, 3],   // not الاعمال = "business" [/الأيدي العامل|الايدي العامل/, 3], [/موارد بشرية|الموارد البشرية/, 3],
   [/توريد/, 1], [/تشغيل/, 1],
   // Turkish
-  [/insan kay?a?nak/, 3], [/istihdam/, 3], [/işe alım|ise alim/, 3], [/iş bulma|is bulma/, 3], [/yurt ?dışı iş\b|yurtdisi is\b/, 3],
+  [/insan kay?a?nak/, 3], [/eleman bulma|personel temin|işçi temin|isci temin|personel tedarik|işgücü tedarik/, 3],
+  [/taşeron|taseron/, 2], [/istihdam/, 3], [/işe alım|ise alim/, 3], [/iş bulma|is bulma/, 3], [/yurt ?dışı iş\b|yurtdisi is\b/, 3],
   [/personel/, 2], [/eleman/, 2], [/işçi|isci/, 2], [/işgücü|isgucu/, 2], [/bakıcı|bakici/, 2], [/kariyer/, 1],
   // Serbian (Latin + Cyrillic)
   [/zapošlj|zaposlj|запошљ/, 3], [/regrut|регрут/, 3], [/ljudsk\S* resurs|људск\S* ресурс/, 3],
@@ -57,6 +58,16 @@ const NEGATIVE: Array<[RegExp, number]> = [
   // public bodies (not partner agencies)
   [/municipal|belediye|opštin|opstin|општин|council|city hall|ministry|bakanlığ|bakanlig|ministarstv|министарств|وزارة|بلدية|embassy|consulate|konsolosluk|ambasad|амбасад/, 3],
   [/su ve kanalizasyon|water (and|&) sewer|vodovod|водовод/, 3],
+  // Turkish trades / businesses that pad small-town "recruitment agency" results
+  [/vinç|vinc\b|sepetli|platform kiralama|iş makine|is makine|karot|beton|hafriyat|zemin etüd/, 3],
+  // (not "ajans" — "Eleman Bulma Ajansı" is a recruitment agency; not "anahtar" — "Anahtar Personel")
+  // Trade words (temizlik, lojistik, inşaat…) are in TRADE below, not here: Turkish labour-supply firms
+  // call themselves "İnsan Kaynakları + Temizlik + Lojistik" and are exactly the partners we want.
+  [/fotoğraf|fotograf|dış çekim|matbaa|medya\b|pazarlama|çilingir/, 3],
+  [/kutu|ambalaj|mobilya|yapı market|elektrik malzeme|oto servis|lastik|kaporta/, 2],
+  // Serbian trades
+  [/vodoinstalater|водоинсталатер|knjigovod|књиговод|bračn\S* agencij|bracn\S* agencij|šlep|slep sluzb|vatrogas|ватрогас/, 3],
+  [/razvojn\S* agencij|развојн\S* агенциј|marketinšk|marketinsk|auto ?kuća|ауто кућа|autoservis|аутосервис|\bdent\b|stomatolog/, 3],
 ];
 
 // Google types (places.types / primaryType) that are never a recruitment agency.
@@ -72,7 +83,26 @@ const NEG_TYPES: Record<string, number> = {
   government_office: 2, local_government_office: 3, city_hall: 3, wholesaler: 2, manufacturer: 2, supplier: 2,
   marketing_consultant: 2, telecommunications_service_provider: 3, coworking_space: 3, business_center: 2,
   general_contractor: 1, transportation_service: 1, apartment_building: 1, premise: 1, street_address: 1,
+  // seen padding "recruitment agency <small town>" results after the 2026-11 TR/RS sweeps
+  car_repair: 3, car_wash: 3, auto_parts_store: 3, locksmith: 3, plumber: 3, electrician: 2, catering_service: 3,
+  shipping_service: 2, television_studio: 3, massage: 3, dental_clinic: 3, dentist: 3, doctor: 3, pharmacy: 3,
+  veterinary_care: 3, bakery: 3, butcher_shop: 3, grocery_store: 3, gym: 3, fitness_center: 3, florist: 3,
+  photographer: 3, printing_service: 3, storage: 2, warehouse_store: 3, construction_company: 1, train_station: 3,
+  bus_station: 3, transit_station: 3, church: 3, mosque: 3, place_of_worship: 3, park: 3, tourist_attraction: 3,
+  fire_station: 3, police: 3, courthouse: 3, embassy: 3, library: 3, museum: 3, night_club: 3, bar: 3,
 };
+
+// Trades that are common words in labour-supply company names (cleaning, logistics,
+// construction, textile, security, food, transport). Negative ONLY when nothing in the
+// name, Google type or domain points to recruitment.
+const TRADE = /temizlik|lojistik|nakliye|gıda|gida\b|tekstil|inşaat|insaat|güvenlik|guvenlik|ciscenje|čišćenje|logistik|građevin|gradjevin/;
+
+// Google types that say nothing either way — the only types for which a business
+// with NO recruitment signal is still worth a human look.
+const NEUTRAL_TYPES = new Set([
+  'service', 'consultant', 'corporate_office', 'point_of_interest', 'establishment', 'business_center',
+  'association_or_organization', 'non_profit_organization', 'employment_agency', 'finance', 'child_care_agency',
+]);
 
 const DOMAIN_POS = /recruit|manpower|staffing|\bhr|hr\b|jobs?|career|employ|workforce|labou?r|talent|istihdam|insankaynak|zaposl|kadrov|regrut|personel|eleman/;
 
@@ -110,7 +140,10 @@ export function classifyAgency(a: { name: string; google_categories?: string[] |
 
   let typeNeg = 0; let typeNegName = '';
   for (const t of types) if ((NEG_TYPES[t] ?? 0) > typeNeg) { typeNeg = NEG_TYPES[t]; typeNegName = t; }
-  const nameNeg = Math.min(n.total, 6);
+  // Trade words only count against a business with NO recruitment signal at all.
+  const trade = pos === 0 ? name.match(TRADE) : null;
+  if (trade) n.hits.push(trade[0]);
+  const nameNeg = Math.min(n.total + (trade ? 3 : 0), 6);
   const neg = nameNeg + typeNeg;
   if (n.hits.length) reasons.push(`name says: ${n.hits.slice(0, 3).join(', ')}`);
   if (typeNeg) reasons.push(`google: ${typeNegName}`);
@@ -121,6 +154,13 @@ export function classifyAgency(a: { name: string; google_categories?: string[] |
   if (pos >= 3 && nameNeg === 0) return { verdict: 'recruitment', reason, pos, neg };
   if (pos >= 3 && nameNeg > 0) return { verdict: 'review', reason, pos, neg };
   if (neg >= 3) return { verdict: 'not_recruitment', reason, pos, neg };
+  // No recruitment signal at all, and Google says it is something specific (a
+  // manufacturer, a crane hire, a car wash…): Google padding a "recruitment agency
+  // <small town>" search with whatever is nearby. Not worth a human review.
+  const primary = a.category ?? null;
+  if (pos === 0 && primary && !NEUTRAL_TYPES.has(primary)) {
+    return { verdict: 'not_recruitment', reason: `no recruitment signal · google: ${primary}`, pos, neg };
+  }
   return { verdict: 'review', reason, pos, neg };
 }
 
