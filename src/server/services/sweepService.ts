@@ -291,6 +291,10 @@ async function runSweep(
   }
 
   logger.info({ sweepId, totalResults, newAgencies, durationMs: Date.now() - t0 }, 'sweep_complete');
+
+  // New agencies → get their emails/WhatsApp and settle unclear ones right away,
+  // instead of waiting for someone to press buttons. (Dynamic import avoids a cycle.)
+  if (newAgencies > 0) void import('./automationService.js').then((m) => m.runAutomation('after search'));
 }
 
 async function upsertDiscoveryResults(

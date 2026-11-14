@@ -29,6 +29,7 @@ const filterSchema = z.object({
   // Agencies table applies, and could reach agencies not shown on screen.
   stage: z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
   relevance: z.enum(['visible', 'recruitment', 'review', 'not_recruitment', 'all']).optional(),
+  step: z.enum(['check', 'contact', 'followup', 'partners']).optional(),
 });
 
 // GET /api/outreach/config — is WhatsApp wired up? drives the UI's enabled state.

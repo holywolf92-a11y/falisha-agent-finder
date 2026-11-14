@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { QuotaWidget } from '@/components/app/QuotaWidget';
+import { TodayPanel } from '@/components/app/TodayPanel';
 import {
   Building2, Send, MapPin, Radar, Sparkles, Globe, Phone as PhoneIcon, ChevronRight,
 } from 'lucide-react';
@@ -26,7 +27,7 @@ type Stats = {
 
 const COUNTRY_LABEL: Record<string, string> = {
   ae: '🇦🇪 UAE', sa: '🇸🇦 Saudi', qa: '🇶🇦 Qatar', kw: '🇰🇼 Kuwait',
-  bh: '🇧🇭 Bahrain', om: '🇴🇲 Oman',
+  bh: '🇧🇭 Bahrain', om: '🇴🇲 Oman', tr: '🇹🇷 Türkiye', rs: '🇷🇸 Serbia', mv: '🇲🇻 Maldives',
 };
 
 export function DashboardPage() {
@@ -47,11 +48,13 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Overview of discovered agencies, sweep activity, enrichment progress, and outreach.
+          Find recruitment agencies abroad, check they are real, and turn them into partners.
         </p>
       </div>
+
+      <TodayPanel />
 
       {error && (
         <Card className="border-destructive/40">
@@ -74,14 +77,14 @@ export function DashboardPage() {
           sub={stats ? `${stats.coverage.citiesCovered} cities` : ''}
         />
         <Kpi
-          label="Sweeps this month"
+          label="Searches this month"
           value={loading ? '—' : `${stats?.sweeps.thisMonth ?? 0}`}
           icon={Radar}
           sub={stats?.sweeps.running ? `${stats.sweeps.running} running` : (stats ? `${stats.sweeps.total} all-time` : '')}
           highlight={!!stats?.sweeps.running}
         />
         <Kpi
-          label="Outreach sent"
+          label="Messages sent"
           value={loading ? '—' : `${stats?.outreach.total ?? 0}`}
           icon={Send}
           sub={stats?.outreach.thisWeek ? `${stats.outreach.thisWeek} this week` : (stats ? 'none yet' : '')}

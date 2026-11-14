@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { QuotaWidget } from '@/components/app/QuotaWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -70,6 +71,15 @@ export function SettingsPage() {
         </p>
       </div>
 
+      {/* Google usage this month (moved here from the Agencies page) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Google Maps usage this month</CardTitle>
+          <CardDescription>Searches and detail lookups count against Google's free monthly allowance. Background tasks never go past it.</CardDescription>
+        </CardHeader>
+        <CardContent><QuotaWidget /></CardContent>
+      </Card>
+
       {error && (
         <Card className="border-destructive/40">
           <CardContent className="py-3 flex items-center gap-2 text-sm text-destructive">
@@ -88,9 +98,10 @@ export function SettingsPage() {
                 <KeyRound className="h-4 w-4 text-primary" /> {group}
               </CardTitle>
               <CardDescription>
-                {group === 'Google Maps' && 'Powers the agency discovery sweep across Gulf cities.'}
+                {group === 'Google Maps' && 'Powers "Find agencies" — Google Maps searches in any country.'}
                 {group === 'Email enrichment' && 'Verifies and discovers contact emails for discovered agencies.'}
                 {group === 'Job boards' && 'Optional — feeds the parallel job-board sweep in your main portal.'}
+                {group === 'Decision-makers' && 'Find named HR managers and owners at confirmed agencies (Hunter: emails, Lusha: mobiles).'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

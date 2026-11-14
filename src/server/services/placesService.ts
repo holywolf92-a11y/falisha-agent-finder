@@ -124,6 +124,8 @@ export async function searchText(args: {
   pageSize?: number;
 }): Promise<{ results: PlaceDiscoveryResult[]; nextPageToken?: string }> {
   const key = await getApiKey();
+  // Count every page request (each one is billed) so Settings shows real usage.
+  await recordOrThrow('text_search');
   const body: Record<string, unknown> = {
     textQuery: args.query,
     pageSize: args.pageSize ?? 20,

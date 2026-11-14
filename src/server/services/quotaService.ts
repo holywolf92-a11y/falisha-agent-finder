@@ -30,7 +30,9 @@ export const SAFETY_BUFFER: Record<ApiMethod, number> = {
 // once we cross this so the user has cost visibility without a hard gate.
 // (Updating these to match Google's published 2026 tiers — verify quarterly.)
 export const FREE_TIER_THRESHOLD: Record<ApiMethod, number> = {
-  text_search:   5_000,   // Pro tier monthly free
+  // Our search asks for rating / website / phone → Google bills it as Text Search
+  // *Enterprise* (1,000 free a month), not Pro (5,000).
+  text_search:   1_000,   // Enterprise tier monthly free
   place_details: 1_000,   // Enterprise tier monthly free
 };
 

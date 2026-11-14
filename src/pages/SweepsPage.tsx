@@ -43,7 +43,7 @@ export function SweepsPage() {
       const data = await api.get<{ sweeps: Sweep[] }>('/sweeps');
       setSweeps(data.sweeps);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load sweeps');
+      toast.error(e instanceof Error ? e.message : 'Failed to load searches');
     } finally {
       setLoading(false);
     }
@@ -68,15 +68,15 @@ export function SweepsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Sweeps</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Find agencies</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Discover agencies anywhere via Google Maps — by niche + country, tiled across major cities.
+            Search a country on Google Maps for recruitment agencies. Each search covers every city, in the local language.
           </p>
         </div>
         <Dialog open={openNew} onOpenChange={setOpenNew}>
           <DialogTrigger asChild>
             <Button>
-              <Plus className="h-4 w-4" /> Run sweep
+              <Plus className="h-4 w-4" /> Search a country
             </Button>
           </DialogTrigger>
           <NewSweepDialog onStarted={() => { setOpenNew(false); void reload(); }} />
@@ -91,9 +91,9 @@ export function SweepsPage() {
             <div className="h-12 w-12 mx-auto rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
               <Radar className="h-6 w-6" strokeWidth={1.5} />
             </div>
-            <h3 className="mt-4 text-base font-medium">No sweeps yet</h3>
+            <h3 className="mt-4 text-base font-medium">No searches yet</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Click <strong>Run sweep</strong> above to discover agencies by niche and country.
+              Click <strong>Search a country</strong> to find recruitment agencies there on Google Maps.
             </p>
           </CardContent>
         </Card>
@@ -195,7 +195,7 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
         districts,
         ...(city.trim() ? { city: city.trim() } : {}),
       });
-      toast.success(`Sweep started: ${niche.trim()} · ${selected?.name || country}`);
+      toast.success(`Searching ${selected?.name || country} — new agencies appear under Partner agencies`);
       onStarted();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to start sweep');
@@ -209,9 +209,9 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
   return (
     <DialogContent className="max-w-lg">
       <DialogHeader>
-        <DialogTitle>Run a new sweep</DialogTitle>
+        <DialogTitle>Search a country for agencies</DialogTitle>
         <DialogDescription>
-          Discover businesses anywhere via Google Maps — pick a niche and country, and we tile across its major cities.
+          We search Google Maps city by city, in the local language, and keep only real recruitment agencies. New agencies get their emails and WhatsApp numbers automatically.
         </DialogDescription>
       </DialogHeader>
 
@@ -278,7 +278,7 @@ function NewSweepDialog({ onStarted }: { onStarted: () => void }) {
       <DialogFooter>
         <Button variant="ghost" onClick={onStarted} disabled={busy}>Cancel</Button>
         <Button onClick={start} disabled={busy || !niche.trim() || !country}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Start sweep'}
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Start search'}
         </Button>
       </DialogFooter>
     </DialogContent>

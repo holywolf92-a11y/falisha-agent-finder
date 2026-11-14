@@ -18,6 +18,7 @@ import { outreachRouter } from './routes/outreach.js';
 import { inboxRouter } from './routes/inbox.js';
 import { contactsRouter } from './routes/contacts.js';
 import { startSettingsListener } from './services/settingsService.js';
+import { startAutomationScheduler } from './services/automationService.js';
 import { logger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,10 @@ app.use('/api/contacts', contactsRouter);
 // Fire-and-forget: start the Supabase realtime listener for cross-process
 // settings invalidation. Non-fatal if it fails (settings still work via TTL).
 void startSettingsListener();
+
+// Background jobs (website scrape, WhatsApp check, review settling, free-tier
+// enrichment): shortly after boot, then every AUTOMATION_INTERVAL_HOURS.
+startAutomationScheduler();
 
 // ─── SPA static serving (production only — dev uses Vite's own server) ─────
 if (isProduction) {

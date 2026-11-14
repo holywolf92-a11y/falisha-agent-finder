@@ -63,6 +63,21 @@ function daysAgoIso(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString();
 }
 
+// PostgREST returns at most 1,000 rows per request — page through for row-level aggregates.
+async function fetchAllRows<T>(page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < 500_000; from += 1000) {
+    const { data } = await page(from, from + 999);
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
+
+// Only real agencies count on Home — businesses hidden as "not a recruitment agency" don't.
+const VISIBLE = 'relevance.is.null,relevance.neq.not_recruitment';
+
 export async function getDashboardStats(): Promise<DashboardStats> {
   const sb = db();
 
@@ -79,11 +94,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     outreachTotal,
     outreachThisWeek,
   ] = await Promise.all([
-    countWhere('agencies',         (q) => (q as any).is('deleted_at', null)),
-    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).eq('enrichment_status', 'enriched')),
-    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).eq('enrichment_status', 'not_enriched')),
-    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).eq('enrichment_status', 'failed')),
-    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).not('website', 'is', null)),
+    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).or(VISIBLE)),
+    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).or(VISIBLE).eq('enrichment_status', 'enriched')),
+    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).or(VISIBLE).eq('enrichment_status', 'not_enriched')),
+    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).or(VISIBLE).eq('enrichment_status', 'failed')),
+    countWhere('agencies',         (q) => (q as any).is('deleted_at', null).or(VISIBLE).not('website', 'is', null)),
     countWhere('sweeps',           (q) => q),
     countWhere('sweeps',           (q) => (q as any).gte('created_at', currentMonthStartIso())),
     countWhere('sweeps',           (q) => (q as any).eq('status', 'running')),
@@ -93,19 +108,17 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   // Distinct phones-owning agencies: count distinct agency_id from agency_phones.
   // Supabase JS doesn't have a clean COUNT(DISTINCT) helper, so fetch the IDs.
-  const { data: phoneOwnerIds } = await sb
-    .from('agency_phones')
-    .select('agency_id');
-  const withPhones = new Set((phoneOwnerIds ?? []).map((r: { agency_id: string }) => r.agency_id)).size;
+  const phoneOwnerIds = await fetchAllRows<{ agency_id: string }>((f, t) => sb
+    .from('agency_phones').select('agency_id, agencies!inner(relevance)')
+    .or(VISIBLE, { referencedTable: 'agencies' }).order('agency_id').range(f, t));
+  const withPhones = new Set(phoneOwnerIds.map((r) => r.agency_id)).size;
 
   // Country breakdown — pull all (small set) and aggregate client-side.
-  const { data: countryRows } = await sb
-    .from('agencies')
-    .select('country_code')
-    .is('deleted_at', null)
-    .not('country_code', 'is', null);
+  const countryRows = await fetchAllRows<{ country_code: string }>((f, t) => sb
+    .from('agencies').select('country_code')
+    .is('deleted_at', null).or(VISIBLE).not('country_code', 'is', null).order('id').range(f, t));
   const countryMap = new Map<string, number>();
-  for (const r of (countryRows ?? []) as Array<{ country_code: string }>) {
+  for (const r of countryRows) {
     countryMap.set(r.country_code, (countryMap.get(r.country_code) ?? 0) + 1);
   }
   const byCountry = Array.from(countryMap.entries())
@@ -113,13 +126,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .sort((a, b) => b.count - a.count);
 
   // Cities covered: distinct (country, city) pairs where city is set.
-  const { data: cityRows } = await sb
-    .from('agencies')
-    .select('country_code, city')
-    .is('deleted_at', null)
-    .not('city', 'is', null);
+  const cityRows = await fetchAllRows<{ country_code: string | null; city: string | null }>((f, t) => sb
+    .from('agencies').select('country_code, city')
+    .is('deleted_at', null).or(VISIBLE).not('city', 'is', null).order('id').range(f, t));
   const cityKey = new Set<string>();
-  for (const r of (cityRows ?? []) as Array<{ country_code: string | null; city: string | null }>) {
+  for (const r of cityRows) {
     if (r.country_code && r.city) cityKey.add(`${r.country_code}|${r.city.toLowerCase()}`);
   }
 

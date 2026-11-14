@@ -41,15 +41,15 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             <Command.Empty className="py-6 text-center text-xs text-muted-foreground">No results found.</Command.Empty>
 
             <Command.Group heading="Jump to">
-              <Item onSelect={() => run(() => navigate('/'))} icon={<LayoutDashboard className="h-4 w-4" />} label="Dashboard" hint="G then D" />
-              <Item onSelect={() => run(() => navigate('/agencies'))} icon={<Building2 className="h-4 w-4" />} label="Agencies" hint="G then A" />
-              <Item onSelect={() => run(() => navigate('/sweeps'))} icon={<Radar className="h-4 w-4" />} label="Sweeps" hint="G then S" />
-              <Item onSelect={() => run(() => navigate('/outreach'))} icon={<Send className="h-4 w-4" />} label="Outreach" hint="G then O" />
+              <Item onSelect={() => run(() => navigate('/'))} icon={<LayoutDashboard className="h-4 w-4" />} label="Home" hint="G then D" />
+              <Item onSelect={() => run(() => navigate('/agencies'))} icon={<Building2 className="h-4 w-4" />} label="Partner agencies" hint="G then A" />
+              <Item onSelect={() => run(() => navigate('/sweeps'))} icon={<Radar className="h-4 w-4" />} label="Find agencies" hint="G then S" />
+              <Item onSelect={() => run(() => navigate('/outreach'))} icon={<Send className="h-4 w-4" />} label="Inbox" hint="G then O" />
               <Item onSelect={() => run(() => navigate('/settings'))} icon={<Settings className="h-4 w-4" />} label="Settings" hint="G then ," />
             </Command.Group>
 
             <Command.Group heading="Actions">
-              <Item onSelect={() => run(() => navigate('/sweeps?new=1'))} icon={<PlusCircle className="h-4 w-4" />} label="Start a new sweep" />
+              <Item onSelect={() => run(() => navigate('/sweeps?new=1'))} icon={<PlusCircle className="h-4 w-4" />} label="Search a new country" />
             </Command.Group>
 
             <Command.Group heading="Preferences">

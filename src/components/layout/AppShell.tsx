@@ -12,11 +12,11 @@ import { CommandPalette } from './CommandPalette';
 const SIDEBAR_STATE_KEY = 'faf:sidebar-collapsed';
 
 const NAV = [
-  { to: '/',          label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/agencies',  label: 'Agencies',  icon: Building2 },
-  { to: '/sweeps',    label: 'Sweeps',    icon: Radar },
-  { to: '/outreach',  label: 'Inbox',     icon: MessageSquare },
-  { to: '/settings',  label: 'Settings',  icon: Settings },
+  { to: '/',          label: 'Home',            icon: LayoutDashboard },
+  { to: '/agencies',  label: 'Partner agencies', icon: Building2 },
+  { to: '/sweeps',    label: 'Find agencies',   icon: Radar },
+  { to: '/outreach',  label: 'Inbox',           icon: MessageSquare },
+  { to: '/settings',  label: 'Settings',        icon: Settings },
 ] as const;
 
 export function AppShell() {

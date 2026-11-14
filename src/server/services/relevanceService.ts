@@ -13,7 +13,15 @@ export type Verdict = 'recruitment' | 'not_recruitment' | 'review';
 export type Classification = { verdict: Verdict; reason: string; pos: number; neg: number };
 
 // toLowerCase('İ') → 'i' + U+0307 (combining dot) in JS; strip it so "İnsan" matches "insan".
-const norm = (s: string) => s.toLowerCase().normalize('NFKC').replace(/̇/g, '');
+// Lowercase + fold Turkish dotted/dotless I: JS lowercases 'I' to 'i' (not 'ı') and 'İ' to 'i'+U+0307,
+// so 'HALI YIKAMA' must match a pattern written 'halı yıkama'. Text AND patterns are folded ı→i.
+const norm = (s: string) => s.toLowerCase().normalize('NFKC').replace(/\u0307/g, '').replace(/ı/g, 'i');
+const foldCache = new WeakMap<RegExp, RegExp>();
+const F = (re: RegExp): RegExp => {
+  let f = foldCache.get(re);
+  if (!f) { f = new RegExp(re.source.replace(/ı/g, 'i'), re.flags); foldCache.set(re, f); }
+  return f;
+};
 
 // [pattern, weight] — matched against lowercased name (and homepage text).
 const POSITIVE: Array<[RegExp, number]> = [
@@ -25,6 +33,7 @@ const POSITIVE: Array<[RegExp, number]> = [
   [/employment/, 2], [/outsourc/, 1], [/\bcareers?\b/, 1], [/\bvisa\b/, 0],
   // Arabic
   [/[اإأآ]ستقدام/, 3], [/توظيف/, 3],   // every alef spelling: استقدام / إستقدام / أستقدام [/عمالة|(^|\s)(ال)?عمال(\s|$)/, 3],   // not الاعمال = "business" [/الأيدي العامل|الايدي العامل/, 3], [/موارد بشرية|الموارد البشرية/, 3],
+  [/لجلب|جلب العمال|العاملة|عاملة|عاملات/, 3],   // "مكتب … لجلب العاملة" — domestic-worker recruitment offices
   [/توريد/, 1], [/تشغيل/, 1],
   // Turkish
   [/insan kay?a?nak/, 3], [/eleman bulma|personel temin|işçi temin|isci temin|personel tedarik|işgücü tedarik/, 3],
@@ -65,6 +74,12 @@ const NEGATIVE: Array<[RegExp, number]> = [
   // call themselves "İnsan Kaynakları + Temizlik + Lojistik" and are exactly the partners we want.
   [/fotoğraf|fotograf|dış çekim|matbaa|medya\b|pazarlama|çilingir/, 3],
   [/kutu|ambalaj|mobilya|yapı market|elektrik malzeme|oto servis|lastik|kaporta/, 2],
+  // Turkish service trades that pad "agency" searches (from the 2026-11 check pile). Not "teknik" —
+  // "Teknik Personel Temin" is an agency.
+  [/\bservis|tamir|ilaçlama|ilaclama|gayrimenkul|mühendislik|muhendislik|diyetisyen|asansör|asansor|kombi|klima\b|koltuk|halı yıkama|yıkama|beyaz eşya|ev aletleri|elektronik|uydu|arıtma|aritma|montaj|\bsrc\b|sürücü kursu|osgb|iş güvenliği|is guvenligi|bilişim|bilisim|tasarım|hukuk|kiralık|kiralik|tesisat|izolasyon|mantolama|peyzaj|veteriner|optik|kırtasiye|petshop|elektrik\b|elektrikçi/, 3],
+  // Turkish public bodies (directorates, governorships, municipalities' units)
+  [/müdürlüğü|mudurlugu|idaresi|valiliği|valiligi|kaymakamlığı|başkanlığı|baskanligi|komutanlığı|bakanlığı/, 3],
+  [/yangın|söndürme|sondurme|çanak|canak|anten|kurtarma|iş sağlığı|is sagligi|site yönetimi|konut yönetimi|apartman yönetimi|\bav\.\s|avukat|barosu|hukuk bürosu|bando|mehter|semazen|halı yıkama/, 3],
   // Serbian trades
   [/vodoinstalater|водоинсталатер|knjigovod|књиговод|bračn\S* agencij|bracn\S* agencij|šlep|slep sluzb|vatrogas|ватрогас/, 3],
   [/razvojn\S* agencij|развојн\S* агенциј|marketinšk|marketinsk|auto ?kuća|ауто кућа|autoservis|аутосервис|\bdent\b|stomatolog/, 3],
@@ -95,7 +110,7 @@ const NEG_TYPES: Record<string, number> = {
 // Trades that are common words in labour-supply company names (cleaning, logistics,
 // construction, textile, security, food, transport). Negative ONLY when nothing in the
 // name, Google type or domain points to recruitment.
-const TRADE = /temizlik|lojistik|nakliye|gıda|gida\b|tekstil|inşaat|insaat|güvenlik|guvenlik|ciscenje|čišćenje|logistik|građevin|gradjevin/;
+const TRADE = /temizlik|lojistik|nakliye|gıda|gida\b|tekstil|inşaat|insaat|güvenlik|guvenlik|ciscenje|čišćenje|logistik|građevin|gradjevin|teknik|metal|soğutma|sogutma|yönetimi|yonetimi|iletişim|iletisim|organizasyon|enerji|yapı\b/;
 
 // Google types that say nothing either way — the only types for which a business
 // with NO recruitment signal is still worth a human look.
@@ -109,7 +124,7 @@ const DOMAIN_POS = /recruit|manpower|staffing|\bhr|hr\b|jobs?|career|employ|work
 function score(text: string, table: Array<[RegExp, number]>): { total: number; hits: string[] } {
   let total = 0; const hits: string[] = [];
   for (const [re, w] of table) {
-    const m = text.match(re);
+    const m = text.match(F(re));
     if (m && w > 0) { total += w; hits.push(m[0]); }
   }
   return { total, hits };
@@ -118,12 +133,12 @@ function score(text: string, table: Array<[RegExp, number]>): { total: number; h
 // State / municipal employment services. Their names are full of recruitment words
 // ("Nacionalna služba za zapošljavanje", "İŞKUR", "Agentur für Arbeit") but they are
 // public bodies, not private agencies we can partner with — always hidden.
-const PUBLIC_EMPLOYMENT = /nacionaln\S* služb\S* za zapošlj|nacionaln\S* sluzb\S* za zaposlj|национал\S* служб\S* за запошљ|državn\S* služb\S* za zapošlj|државн\S* служб\S* за запошљ|biro za nezaposlen|zavod za zapošljavanje|завод за запошљавање|\bnsz\b|işkur|iskur|türkiye iş kurumu|turkiye is kurumu|\bibb\b|istihdam ofisi|belediye\S* istihdam|agentur für arbeit|agentur fur arbeit|jobcenter|anofm|agenția (județeană|națională) pentru ocuparea|агенция по заетостта|služba za zapošljavanje|public employment service|government employment|مكتب العمل|وزارة العمل|وزارة الموارد البشرية|صندوق تنمية الموارد البشرية/;
+const PUBLIC_EMPLOYMENT = /nacionaln\S* služb\S* za zapošlj|nacionaln\S* sluzb\S* za zaposlj|национал\S* служб\S* за запошљ|državn\S* služb\S* za zapošlj|државн\S* служб\S* за запошљ|biro za nezaposlen|zavod za zapošljavanje|завод за запошљавање|\bnsz\b|işkur|iskur|türkiye iş kurumu|turkiye is kurumu|çalışma ve iş kurumu|calisma ve is kurumu|iş kulübü|is kulubu|personel genel müdürlüğü|\bibb\b|istihdam ofisi|belediye\S* istihdam|agentur für arbeit|agentur fur arbeit|jobcenter|anofm|agenția (județeană|națională) pentru ocuparea|агенция по заетостта|služba za zapošljavanje|public employment service|government employment|مكتب العمل|وزارة العمل|وزارة الموارد البشرية|صندوق تنمية الموارد البشرية/;
 
 /** Stage 1–3: name + Google types + website domain. Cheap, no network. */
 export function classifyAgency(a: { name: string; google_categories?: string[] | null; category?: string | null; website?: string | null }): Classification {
   const name = norm(a.name || '');
-  const pub = name.match(PUBLIC_EMPLOYMENT);
+  const pub = name.match(F(PUBLIC_EMPLOYMENT));
   if (pub) return { verdict: 'not_recruitment', reason: `public employment service: ${pub[0]}`, pos: 0, neg: 9 };
   const types = new Set([...(a.google_categories ?? []), ...(a.category ? [a.category] : [])]);
   const p = score(name, POSITIVE);
@@ -141,7 +156,7 @@ export function classifyAgency(a: { name: string; google_categories?: string[] |
   let typeNeg = 0; let typeNegName = '';
   for (const t of types) if ((NEG_TYPES[t] ?? 0) > typeNeg) { typeNeg = NEG_TYPES[t]; typeNegName = t; }
   // Trade words only count against a business with NO recruitment signal at all.
-  const trade = pos === 0 ? name.match(TRADE) : null;
+  const trade = pos === 0 ? name.match(F(TRADE)) : null;
   if (trade) n.hits.push(trade[0]);
   const nameNeg = Math.min(n.total + (trade ? 3 : 0), 6);
   const neg = nameNeg + typeNeg;
@@ -199,7 +214,7 @@ export async function classifyByHomepage(website: string, priorPos = 0, timeoutM
     const text = norm(`${title} ${desc} ${title} ${desc} ${body.slice(0, 20_000)}`);
     const p = score(text, POSITIVE);
     const n = score(text, NEGATIVE);
-    const strong = STRONG.filter((re) => re.test(text)).length;
+    const strong = STRONG.filter((re) => F(re).test(text)).length;
     const reason = `homepage: +[${p.hits.slice(0, 4).join(', ')}] −[${n.hits.slice(0, 4).join(', ')}] strong=${strong}`;
     if (strong >= 2 || (strong >= 1 && p.total >= 5)) return { verdict: 'recruitment', reason, pos: p.total, neg: n.total };
     // Hide only with ≥2 distinct non-recruitment signals: one stray word ("hospital"

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin } from './auth.js';
 import { db } from '../db.js';
 import { applyAgencyFilters } from '../services/agencyFilters.js';
+import { getAutomationStatus, runAutomation } from '../services/automationService.js';
 
 export const agenciesRouter = Router();
 agenciesRouter.use(requireAdmin);
@@ -19,6 +20,7 @@ const querySchema = z.object({
   contactable:      z.enum(['has', 'whatsapp', 'mobile', 'landline', 'none']).optional(),
   stage:            z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
   relevance:        z.enum(['visible', 'recruitment', 'review', 'not_recruitment', 'all']).optional(),
+  step:             z.enum(['check', 'contact', 'followup', 'partners']).optional(),
   sort:             z.enum(['rating', 'score', 'recent']).default('rating'),
   page:             z.coerce.number().int().min(0).default(0),
   pageSize:         z.coerce.number().int().min(1).max(200).default(50),
@@ -83,6 +85,35 @@ agenciesRouter.get('/', async (req, res) => {
     }
   }
   return res.json({ agencies: rows, total: count ?? 0, page, pageSize });
+});
+
+// Background automation status / run now ("More → Run background tasks now").
+agenciesRouter.get('/automation', (_req, res) => res.json(getAutomationStatus()));
+agenciesRouter.post('/automation/run', (_req, res) => {
+  void runAutomation('manual');
+  return res.status(202).json(getAutomationStatus());
+});
+
+// GET /api/agencies/summary — counts for the four step cards (+ hidden / all),
+// honouring the same country + search the list uses. Registered before /:id.
+agenciesRouter.get('/summary', async (req, res) => {
+  const base = { country: req.query.country ? String(req.query.country) : undefined, q: req.query.q ? String(req.query.q) : undefined };
+  const count = async (f: Parameters<typeof applyAgencyFilters>[1]) => {
+    let qb = db().from('agencies').select('id', { count: 'exact', head: true }).is('deleted_at', null);
+    qb = applyAgencyFilters(qb, { ...base, ...f });
+    const { count: n, error } = await qb;
+    if (error) throw new Error(error.message);
+    return n ?? 0;
+  };
+  try {
+    const [check, contact, followup, partners, hidden, all] = await Promise.all([
+      count({ step: 'check' }), count({ step: 'contact' }), count({ step: 'followup' }),
+      count({ step: 'partners' }), count({ relevance: 'not_recruitment' }), count({}),
+    ]);
+    return res.json({ check, contact, followup, partners, hidden, all });
+  } catch (err) {
+    return res.status(500).json({ error: err instanceof Error ? err.message : 'summary_failed' });
+  }
 });
 
 agenciesRouter.get('/:id', async (req, res) => {

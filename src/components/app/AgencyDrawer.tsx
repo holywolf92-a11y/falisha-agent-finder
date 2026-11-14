@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { DecisionMakers } from '@/components/app/DecisionMakers';
+import { explainReason } from '@/components/app/AgencySteps';
 
 type Agency = {
   id: string;
@@ -190,33 +191,46 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
                 <>
                   <Header agency={detail.agency} />
 
+                  <GroupHeading title="Who they are" sub="Is it a real recruitment agency, and where" />
+
                   <RelevanceBar agency={detail.agency} onSet={setRelevance} />
 
-                  <Section title="Pipeline">
-                    <div className="space-y-2">
-                      <select
-                        value={stage}
-                        onChange={(e) => setStage(e.target.value)}
-                        className="h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  <Section title="Location">
+                    <p className="text-sm text-muted-foreground">{detail.agency.address || '—'}</p>
+                    {detail.agency.latitude != null && detail.agency.longitude != null && (
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${detail.agency.latitude},${detail.agency.longitude}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
                       >
-                        {DRAWER_STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                      </select>
-                      <textarea
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        rows={3}
-                        placeholder="Notes about this agency…"
-                        className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
-                      />
-                      <div className="flex justify-end">
-                        <Button size="sm" onClick={savePipeline} disabled={savingCrm}>
-                          {savingCrm ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : 'Save'}
-                        </Button>
-                      </div>
-                    </div>
+                        <MapPin className="h-3 w-3" /> Open in Google Maps
+                      </a>
+                    )}
                   </Section>
 
-                  <Section title="Contact">
+                  {detail.reviews.length > 0 && (
+                    <Section title={`Recent reviews (${detail.reviews.length})`}>
+                      <div className="space-y-2">
+                        {detail.reviews.slice(0, 5).map((r) => (
+                          <div key={r.id} className="rounded-md border border-border bg-muted/30 p-3">
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">{r.author_name || 'Anonymous'}</span>
+                              <span className="flex items-center gap-0.5">
+                                {Array.from({ length: r.rating }).map((_, i) => (
+                                  <Star key={i} className="h-3 w-3 fill-warning text-warning" />
+                                ))}
+                              </span>
+                            </div>
+                            {r.text && <p className="mt-1 text-[13px] text-foreground/80 line-clamp-3">{r.text}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </Section>
+                  )}
+
+                  <GroupHeading title="How to reach them" sub="Best contacts and the people to talk to" />
+
+                  <Section title="Phones, emails and website">
                     {detail.phones.length === 0 && detail.emails.length === 0 && !detail.agency.website && (
                       <div className="space-y-2">
                         <p className="text-sm text-muted-foreground">
@@ -236,7 +250,7 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
                                   title="Scrape website for emails + socials">
                             {scraping
                               ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Scraping…</>
-                              : <><Globe className="h-3.5 w-3.5" /> Scrape website</>}
+                              : <><Globe className="h-3.5 w-3.5" /> Find emails on website</>}
                           </Button>
                         )}
                         <Button size="sm" variant="ghost" onClick={runEnrich} disabled={enriching}
@@ -275,7 +289,7 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
                     )}
                   </Section>
 
-                  <Section title="Decision-makers">
+                  <Section title="Named people (HR, owners)">
                     <DecisionMakers agencyId={detail.agency.id} hasWebsite={!!detail.agency.website} />
                   </Section>
 
@@ -294,40 +308,33 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
                     </Section>
                   )}
 
-                  <Section title="Location">
-                    <p className="text-sm text-muted-foreground">{detail.agency.address || '—'}</p>
-                    {detail.agency.latitude != null && detail.agency.longitude != null && (
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${detail.agency.latitude},${detail.agency.longitude}`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                  <GroupHeading title="Your progress" sub="Where this agency is in your pipeline" />
+
+                  <Section title="Stage and notes">
+                    <div className="space-y-2">
+                      <select
+                        value={stage}
+                        onChange={(e) => setStage(e.target.value)}
+                        className="h-9 w-full px-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <MapPin className="h-3 w-3" /> Open in Google Maps
-                      </a>
-                    )}
+                        {DRAWER_STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+                      <textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        rows={3}
+                        placeholder="Notes about this agency…"
+                        className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+                      />
+                      <div className="flex justify-end">
+                        <Button size="sm" onClick={savePipeline} disabled={savingCrm}>
+                          {savingCrm ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : 'Save'}
+                        </Button>
+                      </div>
+                    </div>
                   </Section>
 
-                  {detail.reviews.length > 0 && (
-                    <Section title={`Recent reviews (${detail.reviews.length})`}>
-                      <div className="space-y-2">
-                        {detail.reviews.slice(0, 5).map((r) => (
-                          <div key={r.id} className="rounded-md border border-border bg-muted/30 p-3">
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">{r.author_name || 'Anonymous'}</span>
-                              <span className="flex items-center gap-0.5">
-                                {Array.from({ length: r.rating }).map((_, i) => (
-                                  <Star key={i} className="h-3 w-3 fill-warning text-warning" />
-                                ))}
-                              </span>
-                            </div>
-                            {r.text && <p className="mt-1 text-[13px] text-foreground/80 line-clamp-3">{r.text}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    </Section>
-                  )}
-
-                  <Section title="Outreach history">
+                  <Section title="Messages sent">
                     {detail.outreach.length === 0 ? (
                       <p className="text-sm text-muted-foreground">No outreach yet.</p>
                     ) : (
@@ -403,8 +410,17 @@ function RelevanceBar({ agency, onSet }: { agency: AgencyDetail['agency']; onSet
         </div>
       )}
       {agency.relevance_reason && agency.relevance_source !== 'manual' && (
-        <div className="mt-1 text-[11px] text-muted-foreground line-clamp-2" title={agency.relevance_reason}>Why: {agency.relevance_reason}</div>
+        <div className="mt-1 text-[11px] text-muted-foreground line-clamp-2" title={agency.relevance_reason}>Why: {explainReason(agency.relevance_reason)}</div>
       )}
+    </div>
+  );
+}
+
+function GroupHeading({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="pt-2 border-t border-border first:border-0">
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="text-[11.5px] text-muted-foreground">{sub}</div>
     </div>
   );
 }

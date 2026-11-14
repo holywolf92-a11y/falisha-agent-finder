@@ -2,22 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { AgencyDrawer } from '@/components/app/AgencyDrawer';
-import { QuotaWidget, refreshQuota, useQuota } from '@/components/app/QuotaWidget';
+import { refreshQuota, useQuota } from '@/components/app/QuotaWidget';
 import {
-  Building2, Search, Star, ChevronLeft, ChevronRight, Sparkles, Loader2, Filter,
-  Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2, Send, Smartphone,
-  Linkedin, Facebook, Instagram, Youtube, Twitter, Music2, UserSearch,
-  type LucideIcon,
+  Building2, Search, ChevronLeft, ChevronRight, Sparkles, Loader2, Filter,
+  Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2, Send, Smartphone, UserSearch,
+  ListChecks, RefreshCw, EyeOff, Download, SlidersHorizontal,
 } from 'lucide-react';
 import { FindPeopleDialog } from '@/components/app/FindPeopleDialog';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  StepCards, BestContact, NextStep, CheckQueue, MoreMenu,
+  type Step, type StepSummary, type MenuItem,
+} from '@/components/app/AgencySteps';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { bestPhone, whatsAppHref, telHref, fmtPhone, type AgencyPhone } from '@/lib/phone';
+import { type AgencyPhone } from '@/lib/phone';
 
 // Server returns this shape from GET /scrape/status — mirror of ScrapeRunState
 type ScrapeRunState = {
@@ -179,6 +182,18 @@ export function AgenciesPage() {
   const [sort, setSort] = useState('rating');
   const [findingWa, setFindingWa] = useState(false);
   const [peopleOpen, setPeopleOpen] = useState(false);
+  // ── Simplified page: the four working steps ─────────────────────────────────
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [step, setStepState] = useState<Step>(() => {
+    const fromUrl = searchParams.get('step');
+    if (fromUrl && ['check', 'contact', 'followup', 'partners', 'all'].includes(fromUrl)) return fromUrl as Step;
+    try { return (localStorage.getItem('faf:agencies-step') as Step) || 'contact'; } catch { return 'contact'; }
+  });
+  const setStep = (s: Step) => { setStepState(s); try { localStorage.setItem('faf:agencies-step', s); } catch { /* private mode */ } };
+  const [summary, setSummary] = useState<StepSummary | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [checkOpen, setCheckOpen] = useState(false);
   const [waConfig, setWaConfig] = useState<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string; emailConfigured: boolean; emailFrom: string | null } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [templates, setTemplates] = useState<WaTemplate[]>([]);
@@ -198,7 +213,13 @@ export function AgenciesPage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, relevance, sort]);
+  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, relevance, sort, step]);
+
+  // Step counters follow the same country + search as the list.
+  useEffect(() => {
+    const p = new URLSearchParams({ ...(country ? { country } : {}), ...(debounced ? { q: debounced } : {}) });
+    api.get<StepSummary>(`/agencies/summary?${p.toString()}`).then(setSummary).catch(() => setSummary(null));
+  }, [country, debounced, refreshNonce]);
 
   // Is WhatsApp outreach wired up? Drives the Send-template button's enabled state.
   useEffect(() => {
@@ -218,15 +239,16 @@ export function AgenciesPage() {
       ...(minReviews       ? { minReviews }       : {}),
       ...(enrichmentStatus ? { enrichmentStatus } : {}),
       ...(contactable      ? { contactable }      : {}),
-      ...(stage            ? { stage }            : {}),
-      ...(relevance        ? { relevance }        : {}),
+      ...(step !== 'all'   ? { step }             : {}),
+      ...(step === 'all' && stage     ? { stage }     : {}),
+      ...(step === 'all' && relevance ? { relevance } : {}),
     });
     api.get<{ agencies: Agency[]; total: number }>(`/agencies?${params.toString()}`)
       .then((d) => { if (!cancelled) { setAgencies(d.agencies); setTotal(d.total); } })
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, relevance, sort, page, refreshNonce]);
+  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, relevance, sort, page, refreshNonce, step]);
 
   // ─── Auto-scrape orchestration ─────────────────────────────────────────────
   // On mount, peek scrape status. If a run is active, poll its progress and
@@ -371,8 +393,9 @@ export function AgenciesPage() {
       ...(minReviews       ? { minReviews: Number(minReviews) } : {}),
       ...(enrichmentStatus ? { enrichmentStatus }               : {}),
       ...(contactable      ? { contactable }                    : {}),
-      ...(stage            ? { stage }                          : {}),
-      ...(relevance        ? { relevance }                      : {}),
+      ...(step !== 'all'   ? { step }                           : {}),
+      ...(step === 'all' && stage     ? { stage }               : {}),
+      ...(step === 'all' && relevance ? { relevance }           : {}),
     };
   }
 
@@ -471,114 +494,133 @@ export function AgenciesPage() {
     }
   }
 
+  const activeExtraFilters = [minRating, minReviews, contactable, enrichmentStatus, step === 'all' ? stage : '', step === 'all' ? relevance : ''].filter(Boolean).length;
+
+  async function runBackgroundNow() {
+    try {
+      await api.post('/agencies/automation/run', {});
+      toast.success('Background tasks started — new emails, WhatsApp numbers and checks will appear over the next minutes.');
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not start background tasks'); }
+  }
+
+  async function exportPartners() {
+    try {
+      const rows: Agency[] = [];
+      for (let p = 0; p < 20; p++) {
+        const params = new URLSearchParams({ step: 'partners', page: String(p), pageSize: '200', sort: 'recent', ...(country ? { country } : {}) });
+        const r = await api.get<{ agencies: Agency[]; total: number }>(`/agencies?${params.toString()}`);
+        rows.push(...r.agencies);
+        if (rows.length >= r.total || r.agencies.length === 0) break;
+      }
+      const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const lines = [['Agency', 'Country', 'City', 'Stage', 'WhatsApp', 'Phone', 'Email', 'Website', 'Licence'].map(esc).join(',')];
+      for (const a of rows) {
+        lines.push([a.name, a.country_code?.toUpperCase(), a.city, a.outreach_stage, a.wa_phone, a.agency_phones?.[0]?.phone,
+          a.agency_emails?.[0]?.email, a.website, a.licence_no ? `${a.licence_authority} ${a.licence_no}` : ''].map(esc).join(','));
+      }
+      const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `partners${country ? '-' + country : ''}.csv`; link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Export failed'); }
+  }
+
+  const moreItems: MenuItem[] = [
+    { label: 'Find agencies in a new country', hint: 'Search Google Maps', icon: Search, onClick: () => navigate('/sweeps') },
+    { label: 'Check agencies one by one', hint: `${(summary?.check ?? 0).toLocaleString()} waiting`, icon: ListChecks, onClick: () => setCheckOpen(true) },
+    'divider',
+    { label: 'Find HR managers and owners', hint: 'Named decision-makers with emails (Hunter)', icon: UserSearch, onClick: () => setPeopleOpen(true), disabled: total === 0 },
+    { label: 'Run background tasks now', hint: 'Emails from websites, WhatsApp numbers, unclear agencies — normally automatic', icon: RefreshCw, onClick: runBackgroundNow },
+    'divider',
+    { label: 'Get phone and website from Google', hint: 'For this list · uses Google quota', icon: Sparkles, onClick: () => setConfirmOpen(true), disabled: enriching || quotaRemaining === 0 || total === 0 },
+    { label: 'Find emails on websites', hint: 'For this list · free', icon: Globe, onClick: () => setScrapeConfirmOpen(true), disabled: scraping || total === 0 || !!scrapeState?.active },
+    { label: 'Check WhatsApp numbers', hint: 'For this list · free', icon: Smartphone, onClick: () => { void runFindWhatsApp(); }, disabled: findingWa || total === 0 },
+    'divider',
+    { label: 'Show hidden businesses', hint: `${(summary?.hidden ?? 0).toLocaleString()} marked as not agencies`, icon: EyeOff, onClick: () => { setStep('all'); setRelevance('not_recruitment'); setFiltersOpen(true); } },
+  ];
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Agencies</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Partner agencies</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Recruitment agencies discovered from Google Maps across the Gulf.
+            Recruitment and manpower agencies you could send workers through. Work left to right: check, contact, follow up.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            onClick={() => setScrapeConfirmOpen(true)}
-            disabled={scraping || total === 0 || !!scrapeState?.active}
-            variant="outline"
-            title={
-              scrapeState?.active
-                ? 'Auto-scrape already running — wait for it to finish'
-                : 'Scrape agency websites for emails, phones, WhatsApp + social links (free, no API cost)'
-            }
-          >
-            {scraping
-              ? <><Loader2 className="h-4 w-4 animate-spin" /> Scraping…</>
-              : <><Globe className="h-4 w-4" /> Scrape websites</>}
-          </Button>
-          <Button
-            onClick={() => setConfirmOpen(true)}
-            disabled={enriching || quotaRemaining === 0 || total === 0}
-            variant="outline"
-          >
-            {enriching
-              ? <><Loader2 className="h-4 w-4 animate-spin" /> Enriching…</>
-              : <><Sparkles className="h-4 w-4" /> Enrich filtered</>}
-          </Button>
-          <Button
-            onClick={runFindWhatsApp}
-            disabled={findingWa || total === 0}
-            variant="outline"
-            title="Classify each number (mobile/landline) and resolve the best WhatsApp-reachable number — free, no API cost"
-          >
-            {findingWa
-              ? <><Loader2 className="h-4 w-4 animate-spin" /> Finding…</>
-              : <><Smartphone className="h-4 w-4" /> Find WhatsApp</>}
-          </Button>
-          <Button
-            onClick={() => setPeopleOpen(true)}
-            disabled={total === 0}
-            variant="outline"
-            title="Find named HR / owner contacts with verified emails at the filtered agencies (Hunter.io)"
-          >
-            <UserSearch className="h-4 w-4" /> Find decision-makers
-          </Button>
-          <Button
-            onClick={openSendModal}
-            disabled={total === 0 || !waConfig?.configured}
-            title={waConfig?.configured
-              ? 'Send an approved WhatsApp template to the filtered agencies'
-              : 'WhatsApp Cloud API is not configured on this service yet'}
-          >
-            <Send className="h-4 w-4" /> Send template
-          </Button>
-          <Button
-            onClick={openEmailModal}
-            disabled={total === 0 || !waConfig?.emailConfigured}
-            variant="outline"
-            title={waConfig?.emailConfigured
-              ? `Email the filtered agencies from ${waConfig.emailFrom ?? 'your Workspace address'}`
-              : 'Email (SMTP) is not configured on this service yet'}
-          >
-            <Mail className="h-4 w-4" /> Send email
-          </Button>
+          {step === 'check' && (
+            <Button onClick={() => setCheckOpen(true)} disabled={(summary?.check ?? 0) === 0}>
+              <ListChecks className="h-4 w-4" /> Start checking
+            </Button>
+          )}
+          {step === 'contact' && (
+            <MoreMenu label="Message these agencies" icon={Send} primary items={[
+              { label: 'Send a WhatsApp message', hint: waConfig?.configured ? 'Approved template to every agency in this list that has WhatsApp' : 'WhatsApp is not set up on this service yet',
+                icon: MessageSquare, onClick: openSendModal, disabled: !waConfig?.configured || total === 0 },
+              { label: 'Send an email', hint: waConfig?.emailConfigured ? `From ${waConfig.emailFrom ?? 'your Workspace address'} to every agency in this list with an email` : 'Email is not set up on this service yet',
+                icon: Mail, onClick: openEmailModal, disabled: !waConfig?.emailConfigured || total === 0 },
+            ]} />
+          )}
+          {step === 'followup' && (
+            <Button onClick={() => navigate('/outreach')}><MessageSquare className="h-4 w-4" /> Open inbox</Button>
+          )}
+          {step === 'partners' && (
+            <Button onClick={exportPartners} disabled={(summary?.partners ?? 0) === 0}><Download className="h-4 w-4" /> Download list</Button>
+          )}
+          <MoreMenu items={moreItems} />
         </div>
       </div>
 
       {/* Auto-scrape progress banner */}
       <AutoScrapeBanner state={scrapeState} pending={pendingCount} />
 
-      {/* Quota widget */}
-      <QuotaWidget />
+      {/* The four working steps */}
+      <StepCards summary={summary} step={step} onChange={setStep} />
 
-      {/* Filter bar */}
+      {/* Country + search; everything else under More filters */}
       <div className="flex flex-col sm:flex-row gap-2 sm:items-center flex-wrap">
+        <FilterSelect value={country} onChange={setCountry} options={COUNTRIES} />
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or address…" className="pl-9" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agency name or city" className="pl-9" />
         </div>
-        <FilterSelect value={country}          onChange={setCountry}          options={COUNTRIES} />
-        <FilterSelect value={minRating}        onChange={setMinRating}        options={MIN_RATINGS} />
-        <FilterSelect value={minReviews}       onChange={setMinReviews}       options={MIN_REVIEWS} />
-        <FilterSelect value={enrichmentStatus} onChange={setEnrichmentStatus} options={ENRICHMENT} />
-        <FilterSelect value={contactable}      onChange={setContactable}      options={CONTACTABLE} />
-        <FilterSelect value={stage}            onChange={setStage}            options={STAGES} />
-        <FilterSelect value={relevance}        onChange={setRelevance}        options={RELEVANCE} />
-        <FilterSelect value={sort}             onChange={setSort}             options={SORT} />
-        {(country || minRating || minReviews || enrichmentStatus || contactable || stage || relevance || q) && (
-          <Button variant="ghost" size="sm" onClick={() => {
-            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setStage(''); setRelevance(''); setQ('');
-          }}>
-            <Filter className="h-3 w-3" /> Clear
-          </Button>
+        <Button variant="outline" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+          <SlidersHorizontal className="h-4 w-4" /> More filters{activeExtraFilters > 0 ? ` (${activeExtraFilters})` : ''}
+        </Button>
+        {step !== 'all' && (
+          <Button variant="ghost" size="sm" onClick={() => setStep('all')}>View all agencies</Button>
         )}
       </div>
+      {filtersOpen && (
+        <div className="flex flex-wrap gap-2 rounded-lg border border-border bg-muted/30 p-3">
+          <FilterSelect value={minRating}        onChange={setMinRating}        options={MIN_RATINGS} />
+          <FilterSelect value={minReviews}       onChange={setMinReviews}       options={MIN_REVIEWS} />
+          <FilterSelect value={contactable}      onChange={setContactable}      options={CONTACTABLE} />
+          <FilterSelect value={enrichmentStatus} onChange={setEnrichmentStatus} options={ENRICHMENT} />
+          {step === 'all' && <FilterSelect value={stage}     onChange={setStage}     options={STAGES} />}
+          {step === 'all' && <FilterSelect value={relevance} onChange={setRelevance} options={RELEVANCE} />}
+          <FilterSelect value={sort}             onChange={setSort}             options={SORT} />
+          {activeExtraFilters > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => {
+              setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setStage(''); setRelevance('');
+            }}>
+              <Filter className="h-3 w-3" /> Clear filters
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Result count */}
-      <div className="text-[12px] text-muted-foreground">
-        <strong className="text-foreground tabular">{total.toLocaleString()}</strong> agencies match
-        {enrichmentStatus === 'not_enriched' && quotaRemaining > 0 && total > 0 && (
-          <span> · <strong className="text-primary">{Math.min(total, quotaRemaining).toLocaleString()}</strong> can be enriched this month</span>
-        )}
+      <div className="text-[12.5px] text-muted-foreground">
+        <strong className="text-foreground tabular">{total.toLocaleString()}</strong>{' '}
+        {step === 'check' ? 'agencies to check — confirm the real ones, hide the rest'
+          : step === 'contact' ? 'confirmed agencies you have not contacted yet'
+          : step === 'followup' ? 'agencies waiting on a reply or your next move'
+          : step === 'partners' ? 'partners — interested or signed'
+          : relevance === 'not_recruitment' ? 'hidden businesses (not recruitment agencies)'
+          : 'agencies'}
       </div>
 
       {/* Table */}
@@ -592,7 +634,10 @@ export function AgenciesPage() {
             <p className="mt-1 text-sm text-muted-foreground">
               {country || minRating || minReviews || enrichmentStatus || q
                 ? 'Adjust your filters above.'
-                : 'Run a sweep from the Sweeps tab to populate this list.'}
+                : step === 'check' ? 'Nothing to check — every agency has been confirmed or hidden.'
+                : step === 'followup' ? 'No conversations yet. Contact agencies from the Contact step.'
+                : step === 'partners' ? 'No partners yet. Agencies you mark as interested appear here.'
+                : 'Search a country from Find agencies to fill this list.'}
             </p>
           </CardContent>
         </Card>
@@ -605,88 +650,42 @@ export function AgenciesPage() {
                   <tr className="text-left text-muted-foreground border-b border-border whitespace-nowrap">
                     <th className="px-3 py-2 font-medium">Agency</th>
                     <th className="px-3 py-2 font-medium">Country</th>
-                    <th className="px-3 py-2 font-medium">Rating</th>
-                    <th className="px-3 py-2 font-medium">Fit</th>
-                    <th className="px-3 py-2 font-medium">Contact</th>
-                    <th className="px-3 py-2 font-medium">WhatsApp</th>
-                    <th className="px-3 py-2 font-medium">Social</th>
-                    <th className="px-3 py-2 font-medium">Type</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Stage</th>
+                    <th className="px-3 py-2 font-medium">Best contact</th>
+                    <th className="px-3 py-2 font-medium">{step === 'check' ? 'Is it an agency?' : 'Next step'}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && agencies.length === 0 && (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                    <tr><td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
                   )}
-                  {agencies.map((a) => {
-                    const phone = bestPhone(a.agency_phones);
-                    const wa = phone ? whatsAppHref(phone.phone) : null;
-                    const tel = phone ? telHref(phone.phone) : null;
-                    return (
-                      <tr key={a.id} onClick={() => setSelectedId(a.id)}
-                          className="border-b border-border last:border-0 hover:bg-muted/40 cursor-pointer whitespace-nowrap">
-                        <td className="px-3 py-1.5 max-w-[24rem] truncate">
-                          <span className="font-medium text-foreground">{a.name}</span>
+                  {agencies.map((a) => (
+                    <tr key={a.id} onClick={() => setSelectedId(a.id)}
+                        className="border-b border-border last:border-0 hover:bg-muted/40 cursor-pointer">
+                      <td className="px-3 py-2 max-w-[26rem]">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-medium text-foreground truncate">{a.name}</span>
                           {a.licence_no && (
-                            <span className="ml-1.5 rounded border border-success/40 bg-success/10 px-1.5 py-px text-[10.5px] text-success align-middle"
-                                  title={`Licence ${a.licence_no} (${a.licence_authority ?? 'official registry'})`}>licensed · {a.licence_authority}</span>
-                          )}
-                          {a.relevance === 'review' && (
-                            <span className="ml-1.5 rounded border border-warning/40 bg-warning/10 px-1.5 py-px text-[10.5px] text-warning align-middle"
-                                  title={`Not sure this is a recruitment agency — open it and confirm. ${a.relevance_reason ?? ''}`}>review</span>
-                          )}
-                          {a.relevance === 'not_recruitment' && (
-                            <span className="ml-1.5 rounded border border-border bg-muted px-1.5 py-px text-[10.5px] text-muted-foreground align-middle"
-                                  title={a.relevance_reason ?? ''}>not an agency</span>
+                            <span className="shrink-0 rounded border border-success/40 bg-success/10 px-1.5 py-px text-[10.5px] text-success"
+                                  title={`Licence ${a.licence_no} (${a.licence_authority ?? 'official registry'})`}>Licensed</span>
                           )}
                           {(a.contacts_count ?? 0) > 0 && (
-                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-px text-[10.5px] text-primary align-middle"
-                                  title={`${a.contacts_count} named decision-maker${a.contacts_count === 1 ? '' : 's'}${a.mobiles_count ? `, ${a.mobiles_count} with mobile` : ''}`}>
-                              <UserSearch className="h-3 w-3" />{a.contacts_count}{a.mobiles_count ? ` · ${a.mobiles_count}📱` : ''}
+                            <span className="shrink-0 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-px text-[10.5px] text-primary"
+                                  title={`${a.contacts_count} named decision-maker${a.contacts_count === 1 ? '' : 's'}`}>
+                              <UserSearch className="h-3 w-3" />{a.contacts_count}
                             </span>
                           )}
-                        </td>
-                        <td className="px-3 py-1.5 text-muted-foreground">
-                          {a.country_code ? (COUNTRIES.find((c) => c.code === a.country_code)?.label ?? a.country_code.toUpperCase()) : '—'}
-                        </td>
-                        <td className="px-3 py-1.5 tabular">
-                          {a.rating != null ? (
-                            <span className="inline-flex items-center gap-1">
-                              <Star className="h-3 w-3 fill-warning text-warning" />
-                              <span className="font-medium">{a.rating}</span>
-                              <span className="text-muted-foreground">({a.review_count})</span>
-                            </span>
-                          ) : <span className="text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <ScoreBadge score={a.score} tier={a.score_tier} />
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <ContactCell phone={phone?.phone ?? null} website={a.website} waHref={wa} telHref={tel} emails={a.agency_emails} />
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <WaCell agency={a} />
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <SocialCell socials={a.agency_socials} />
-                        </td>
-                        <td className="px-3 py-1.5 text-muted-foreground capitalize max-w-[10rem] truncate">{(a.category || '').replace(/_/g, ' ') || '—'}</td>
-                        <td className="px-3 py-1.5">
-                          {a.enrichment_status === 'enriched'
-                            ? <Badge variant="success">Enriched</Badge>
-                            : a.enrichment_status === 'failed'
-                              ? <Badge variant="destructive">Failed</Badge>
-                              : a.enrichment_status === 'in_progress'
-                                ? <Badge pulse>Running</Badge>
-                                : <Badge variant="secondary">Pending</Badge>}
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <StageBadge stage={a.outreach_stage} />
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </div>
+                        <div className="text-[11.5px] text-muted-foreground truncate">
+                          {[a.city, a.rating != null ? `★ ${a.rating} (${a.review_count})` : null].filter(Boolean).join(' · ') || (a.address ?? '')}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                        {a.country_code ? (COUNTRIES.find((c) => c.code === a.country_code)?.label ?? a.country_code.toUpperCase()) : '—'}
+                      </td>
+                      <td className="px-3 py-2 max-w-[16rem]"><BestContact a={a} /></td>
+                      <td className="px-3 py-2 whitespace-nowrap"><NextStep a={a} onChanged={() => setRefreshNonce((n) => n + 1)} /></td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -707,7 +706,10 @@ export function AgenciesPage() {
         </Card>
       )}
 
-      <AgencyDrawer agencyId={selectedId} onClose={() => setSelectedId(null)} />
+      <AgencyDrawer agencyId={selectedId} onClose={() => { setSelectedId(null); setRefreshNonce((n) => n + 1); }} />
+
+      <CheckQueue open={checkOpen} onOpenChange={(v) => { setCheckOpen(v); if (!v) setRefreshNonce((n) => n + 1); }}
+        country={country} onChanged={() => { /* counters refresh when the queue closes */ }} />
 
       {/* Scrape confirmation dialog */}
       <Dialog open={scrapeConfirmOpen} onOpenChange={setScrapeConfirmOpen}>
@@ -997,169 +999,4 @@ function Row({ label, value, highlight }: { label: string; value: string; highli
       <span className={highlight ? 'text-2xl font-semibold tracking-tight tabular' : 'tabular font-medium'}>{value}</span>
     </div>
   );
-}
-
-const SOCIAL_META: Record<string, { icon: LucideIcon; color: string; label: string }> = {
-  linkedin:  { icon: Linkedin,       color: 'text-[#0A66C2] hover:bg-[#0A66C2]/10', label: 'LinkedIn'  },
-  facebook:  { icon: Facebook,       color: 'text-[#1877F2] hover:bg-[#1877F2]/10', label: 'Facebook'  },
-  instagram: { icon: Instagram,      color: 'text-[#E4405F] hover:bg-[#E4405F]/10', label: 'Instagram' },
-  twitter:   { icon: Twitter,        color: 'text-foreground hover:bg-muted',        label: 'Twitter/X' },
-  youtube:   { icon: Youtube,        color: 'text-[#FF0000] hover:bg-[#FF0000]/10', label: 'YouTube'   },
-  tiktok:    { icon: Music2,         color: 'text-foreground hover:bg-muted',        label: 'TikTok'    },
-  whatsapp:  { icon: MessageSquare,  color: 'text-success hover:bg-success/10',      label: 'WhatsApp'  },
-  website:   { icon: Globe,          color: 'text-muted-foreground hover:bg-muted',  label: 'Website'   },
-};
-// Order so the most-used channels come first in the row
-const SOCIAL_ORDER = ['linkedin', 'facebook', 'instagram', 'youtube', 'twitter', 'tiktok', 'whatsapp', 'website'] as const;
-
-function SocialCell({ socials }: { socials: AgencySocial[] | undefined }) {
-  if (!socials || socials.length === 0) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  // Dedupe by platform — pick the first URL per platform — and sort by SOCIAL_ORDER.
-  const byPlatform = new Map<string, string>();
-  for (const s of socials) {
-    if (!byPlatform.has(s.platform)) byPlatform.set(s.platform, s.url);
-  }
-  const sorted: Array<{ platform: string; url: string }> = SOCIAL_ORDER
-    .filter((p) => byPlatform.has(p))
-    .map((p) => ({ platform: p as string, url: byPlatform.get(p)! }));
-  // Anything we didn't recognize, append at the end (rare)
-  for (const [platform, url] of byPlatform) {
-    if (!(SOCIAL_ORDER as readonly string[]).includes(platform)) {
-      sorted.push({ platform, url });
-    }
-  }
-  return (
-    <div className="flex items-center gap-0.5">
-      {sorted.map(({ platform, url }) => {
-        const meta = SOCIAL_META[platform] ?? { icon: Globe, color: 'text-muted-foreground hover:bg-muted', label: platform };
-        const Icon = meta.icon;
-        return (
-          <a
-            key={platform + url}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className={`h-6 w-6 rounded inline-flex items-center justify-center transition-colors ${meta.color}`}
-            title={meta.label}
-          >
-            <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </a>
-        );
-      })}
-    </div>
-  );
-}
-
-function ContactCell({
-  phone, website, waHref, telHref, emails,
-}: {
-  phone: string | null;
-  website: string | null;
-  waHref: string | null;
-  telHref: string | null;
-  emails?: { email: string }[];
-}) {
-  const emailList = emails ?? [];
-  if (!phone && !website && emailList.length === 0) return <span className="text-muted-foreground">—</span>;
-  return (
-    <div className="flex flex-col gap-0.5">
-      {phone && (
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px]">
-          <span className="text-foreground">{fmtPhone(phone)}</span>
-          {telHref && (
-            <a href={telHref} onClick={(e) => e.stopPropagation()}
-               className="h-5 w-5 rounded inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted"
-               title="Call">
-              <PhoneIcon className="h-3 w-3" />
-            </a>
-          )}
-          {waHref && (
-            <a href={waHref} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-               className="h-5 w-5 rounded inline-flex items-center justify-center text-success hover:bg-success/10"
-               title="Open WhatsApp">
-              <MessageSquare className="h-3 w-3" />
-            </a>
-          )}
-        </span>
-      )}
-      {emailList.length > 0 && (
-        <span className="inline-flex items-center gap-1 text-[11.5px]" title={emailList.map((e) => e.email).join(', ')}>
-          <Mail className="h-3 w-3 text-muted-foreground shrink-0" />
-          <a href={`mailto:${emailList[0].email}`} onClick={(e) => e.stopPropagation()}
-             className="text-foreground hover:underline truncate max-w-[13rem]">{emailList[0].email}</a>
-          {emailList.length > 1 && <span className="text-muted-foreground shrink-0">+{emailList.length - 1}</span>}
-        </span>
-      )}
-      {website && (
-        <a href={website} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-           className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground hover:text-foreground"
-           title="Open website">
-          <Globe className="h-3 w-3" /> website
-        </a>
-      )}
-    </div>
-  );
-}
-
-function ScoreBadge({ score, tier }: { score: number | null; tier: 'high' | 'medium' | 'low' | null }) {
-  if (score == null) return <span className="text-muted-foreground">—</span>;
-  const cls =
-    tier === 'high'   ? 'bg-success/15 text-success border-success/30'
-    : tier === 'medium' ? 'bg-warning/15 text-warning border-warning/30'
-    :                     'bg-muted text-muted-foreground border-border';
-  return (
-    <span
-      className={`inline-flex items-center justify-center min-w-[2rem] rounded border px-1.5 py-0.5 text-[11px] font-semibold tabular ${cls}`}
-      title={`Partner-fit ${score}/100`}
-    >
-      {score}
-    </span>
-  );
-}
-
-function StageBadge({ stage }: { stage: string | null }) {
-  if (!stage || stage === 'new') return <span className="text-muted-foreground">—</span>;
-  const cls: Record<string, string> = {
-    contacted:      'bg-muted text-foreground border-border',
-    replied:        'bg-primary/10 text-primary border-primary/30',
-    interested:     'bg-success/15 text-success border-success/30',
-    not_interested: 'bg-muted text-muted-foreground border-border',
-    converted:      'bg-success/20 text-success border-success/40 font-semibold',
-  };
-  return (
-    <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium capitalize ${cls[stage] ?? 'bg-muted text-muted-foreground border-border'}`}>
-      {stage.replace(/_/g, ' ')}
-    </span>
-  );
-}
-
-function WaCell({ agency }: { agency: Agency }) {
-  if (agency.wa_undeliverable_at) {
-    return <Badge variant="destructive" title="Meta reported this number isn't on WhatsApp">Not on WA</Badge>;
-  }
-  if (agency.wa_phone) {
-    const sent = (agency.template_send_count ?? 0) > 0;
-    return (
-      <span className="inline-flex items-center gap-1.5">
-        <a
-          href={whatsAppHref(agency.wa_phone) ?? undefined}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="inline-flex items-center gap-1 text-success hover:underline"
-          title="Open WhatsApp chat"
-        >
-          <MessageSquare className="h-3 w-3" /> Reachable
-        </a>
-        {sent && <Badge variant="secondary" title={`Template sent ${agency.template_send_count}×`}>sent</Badge>}
-      </span>
-    );
-  }
-  if (agency.primary_phone_type === 'landline') {
-    return <span className="text-muted-foreground inline-flex items-center gap-1"><PhoneIcon className="h-3 w-3" /> Landline</span>;
-  }
-  return <span className="text-muted-foreground">—</span>;
 }

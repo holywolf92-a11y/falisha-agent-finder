@@ -24,6 +24,7 @@ const filterSchema = z.object({
   contactable: z.enum(['has', 'whatsapp', 'mobile', 'landline', 'none']).optional(),
   stage: z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
   relevance: z.enum(['visible', 'recruitment', 'review', 'not_recruitment', 'all']).optional(),
+  step: z.enum(['check', 'contact', 'followup', 'partners']).optional(),
 });
 
 function fail(res: import('express').Response, err: unknown, fallback: string) {

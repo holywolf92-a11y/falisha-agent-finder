@@ -22,18 +22,41 @@ export interface AgencyFilter {
    *   'all' → no relevance filter
    */
   relevance?: Relevance;
+  /**
+   * The four working steps the Agencies page is organised around. Each step is a
+   * preset over relevance + outreach_stage, so the list, the step counters and the
+   * bulk actions all agree on exactly which agencies are "in" a step.
+   *   check    — not sure it's a recruitment agency yet (relevance = review)
+   *   contact  — confirmed agency, not contacted yet
+   *   followup — contacted or replied; waiting on a next move
+   *   partners — interested or converted
+   */
+  step?: Step;
 }
 
 export type Relevance = 'visible' | 'recruitment' | 'review' | 'not_recruitment' | 'all';
+export type Step = 'check' | 'contact' | 'followup' | 'partners';
+
+/** Turn a step into the relevance/stage filters it stands for (explicit filters win). */
+export function expandStep(f: AgencyFilter): AgencyFilter {
+  switch (f.step) {
+    case 'check':    return { ...f, relevance: f.relevance ?? 'review' };
+    case 'contact':  return { ...f, relevance: f.relevance ?? 'recruitment', stage: f.stage ?? 'new' };
+    default:         return f;
+  }
+}
 
 /**
  * Apply the shared filters to a Supabase query builder. Generic so the caller
  * keeps its own builder type; `any` is confined to this function body (the
  * Supabase fluent builder isn't cleanly expressible here).
  */
-export function applyAgencyFilters<T>(qb: T, f: AgencyFilter): T {
+export function applyAgencyFilters<T>(qb: T, filter: AgencyFilter): T {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q = qb as any;
+  const f = expandStep(filter);
+  if (f.step === 'followup') q = q.in('outreach_stage', ['contacted', 'replied']);
+  if (f.step === 'partners') q = q.in('outreach_stage', ['interested', 'converted']);
 
   // Hidden non-agencies (travel agencies, shops, ministries…) are excluded from the
   // list AND from every bulk action unless explicitly asked for.
