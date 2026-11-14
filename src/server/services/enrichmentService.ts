@@ -43,6 +43,10 @@ export async function enrichAgency(agencyId: string): Promise<boolean> {
     .maybeSingle<AgencyRow>();
   if (error || !agency) throw new Error(error?.message ?? 'agency_not_found');
 
+  // Registry imports (e.g. 'iskur:<licence no>') aren't Google places — their phone,
+  // email and website come from the licensing authority, so there is nothing to fetch.
+  if (agency.google_place_id.includes(':')) return false;
+
   // Mark as in-progress so the UI shows a spinner
   await sb.from('agencies').update({
     enrichment_status: 'in_progress',

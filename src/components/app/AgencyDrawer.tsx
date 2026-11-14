@@ -32,6 +32,9 @@ type AgencyDetail = {
     relevance?: 'recruitment' | 'review' | 'not_recruitment' | null;
     relevance_reason?: string | null;
     relevance_source?: 'auto' | 'manual' | null;
+    licence_no?: string | null;
+    licence_authority?: string | null;
+    licence_valid_until?: string | null;
   };
   emails: Array<{ id: string; email: string; source: string; verified: boolean; confidence: number }>;
   phones: Array<{ id: string; phone: string; phone_type: string; source: string; verified: boolean }>;
@@ -393,6 +396,12 @@ function RelevanceBar({ agency, onSet }: { agency: AgencyDetail['agency']; onSet
           {r !== 'not_recruitment' && <Button size="sm" variant="ghost" onClick={() => onSet('not_recruitment')}>Not an agency</Button>}
         </div>
       </div>
+      {agency.licence_no && (
+        <div className="mt-1 text-[11.5px] font-medium text-success">
+          Licensed by {agency.licence_authority} · licence {agency.licence_no}
+          {agency.licence_valid_until ? ` · valid until ${new Date(agency.licence_valid_until).toLocaleDateString()}` : ''}
+        </div>
+      )}
       {agency.relevance_reason && agency.relevance_source !== 'manual' && (
         <div className="mt-1 text-[11px] text-muted-foreground line-clamp-2" title={agency.relevance_reason}>Why: {agency.relevance_reason}</div>
       )}

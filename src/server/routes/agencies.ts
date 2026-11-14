@@ -41,7 +41,7 @@ agenciesRouter.get('/', async (req, res) => {
        rating, review_count, business_status, enrichment_status, last_sweep_at,
        score, score_tier, wa_phone, primary_phone_type, outreach_stage,
        last_template_sent_at, template_send_count, wa_undeliverable_at,
-       relevance, relevance_reason, relevance_source,
+       relevance, relevance_reason, relevance_source, licence_no, licence_authority,
        agency_phones (phone, phone_type),
        agency_emails (email),
        agency_socials (platform, url)`,

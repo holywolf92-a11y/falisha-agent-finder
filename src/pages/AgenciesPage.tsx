@@ -63,6 +63,8 @@ type Agency = {
   mobiles_count?: number;
   relevance?: 'recruitment' | 'review' | 'not_recruitment' | null;
   relevance_reason?: string | null;
+  licence_no?: string | null;
+  licence_authority?: string | null;
 };
 
 const COUNTRIES = [
@@ -626,6 +628,10 @@ export function AgenciesPage() {
                           className="border-b border-border last:border-0 hover:bg-muted/40 cursor-pointer whitespace-nowrap">
                         <td className="px-3 py-1.5 max-w-[24rem] truncate">
                           <span className="font-medium text-foreground">{a.name}</span>
+                          {a.licence_no && (
+                            <span className="ml-1.5 rounded border border-success/40 bg-success/10 px-1.5 py-px text-[10.5px] text-success align-middle"
+                                  title={`Licence ${a.licence_no} (${a.licence_authority ?? 'official registry'})`}>licensed · {a.licence_authority}</span>
+                          )}
                           {a.relevance === 'review' && (
                             <span className="ml-1.5 rounded border border-warning/40 bg-warning/10 px-1.5 py-px text-[10.5px] text-warning align-middle"
                                   title={`Not sure this is a recruitment agency — open it and confirm. ${a.relevance_reason ?? ''}`}>review</span>
