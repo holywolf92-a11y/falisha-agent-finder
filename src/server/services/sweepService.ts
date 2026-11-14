@@ -7,6 +7,7 @@ import { db } from '../db.js';
 import { logger } from '../logger.js';
 import { searchText, type PlaceDiscoveryResult } from './placesService.js';
 import { citiesFor, countryName } from './worldCities.js';
+import { classifyAgency } from './relevanceService.js';
 
 // Canonical city grid for sweep discovery. Coordinates verified, radii sized
 // per metro footprint. Add more by editing this list — no schema change.
@@ -321,7 +322,17 @@ async function upsertDiscoveryResults(
 
   const newRows = rows.filter((r) => !existingSet.has(r.google_place_id));
   if (newRows.length) {
-    const withFirstSweep = newRows.map((r) => ({ ...r, first_sweep_id: sweepId }));
+    // Classify on arrival so travel agencies / shops / ministries from the text
+    // search never enter the default Agencies view. Existing rows keep their verdict
+    // (the update below doesn't touch relevance), so manual corrections stick.
+    const checkedAt = new Date().toISOString();
+    const withFirstSweep = newRows.map((r) => {
+      const c = classifyAgency({ name: r.name, google_categories: r.google_categories, category: r.category });
+      return {
+        ...r, first_sweep_id: sweepId,
+        relevance: c.verdict, relevance_reason: c.reason, relevance_source: 'auto', relevance_checked_at: checkedAt,
+      };
+    });
     const { error } = await sb.from('agencies').upsert(withFirstSweep, { onConflict: 'google_place_id' });
     if (error) {
       logger.error({ err: error.message }, 'agencies_insert_failed');

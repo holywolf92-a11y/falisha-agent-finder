@@ -269,7 +269,13 @@ async function selectBatch(args: BatchArgs) {
     .order('rating', { ascending: false, nullsFirst: false })
     .limit(2000);
   if (args.agencyIds?.length) qb = qb.in('id', args.agencyIds);
-  else qb = applyAgencyFilters(qb, args.filter ?? {});
+  else {
+    qb = applyAgencyFilters(qb, args.filter ?? {});
+    // Credits only go to CONFIRMED agencies by default — not "needs review" rows —
+    // unless the user deliberately filtered to another relevance bucket.
+    const rel = args.filter?.relevance;
+    if (!rel || rel === 'visible') qb = qb.eq('relevance', 'recruitment');
+  }
   const { data, error } = await qb;
   if (error) throw new Error(error.message);
   const rows = data ?? [];

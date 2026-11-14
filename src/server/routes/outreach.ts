@@ -25,6 +25,10 @@ const filterSchema = z.object({
   minScore: z.coerce.number().int().min(0).max(100).optional(),
   enrichmentStatus: z.enum(['not_enriched', 'enriched', 'failed', 'in_progress']).optional(),
   contactable: z.enum(['has', 'whatsapp', 'mobile', 'landline', 'none']).optional(),
+  // Previously missing → bulk sends silently ignored the pipeline-stage filter the
+  // Agencies table applies, and could reach agencies not shown on screen.
+  stage: z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
+  relevance: z.enum(['visible', 'recruitment', 'review', 'not_recruitment', 'all']).optional(),
 });
 
 // GET /api/outreach/config — is WhatsApp wired up? drives the UI's enabled state.

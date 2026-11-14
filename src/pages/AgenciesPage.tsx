@@ -61,6 +61,8 @@ type Agency = {
   // Decision-makers (Hunter / Lusha) — counters maintained by contactsService
   contacts_count?: number;
   mobiles_count?: number;
+  relevance?: 'recruitment' | 'review' | 'not_recruitment' | null;
+  relevance_reason?: string | null;
 };
 
 const COUNTRIES = [
@@ -108,6 +110,13 @@ const SORT = [
   { value: 'rating', label: 'Sort: Rating' },
   { value: 'score',  label: 'Sort: Partner-fit' },
   { value: 'recent', label: 'Sort: Newest' },
+];
+const RELEVANCE = [
+  { value: '',                label: 'Show: agencies + to review' },
+  { value: 'recruitment',     label: 'Show: confirmed agencies' },
+  { value: 'review',          label: 'Show: needs review' },
+  { value: 'not_recruitment', label: 'Show: hidden (not agencies)' },
+  { value: 'all',             label: 'Show: everything' },
 ];
 const STAGES = [
   { value: '',               label: 'Any stage' },
@@ -164,6 +173,7 @@ export function AgenciesPage() {
   // ── Phase 1 outreach state ──────────────────────────────────────────────────
   const [contactable, setContactable] = useState('');
   const [stage, setStage] = useState('');
+  const [relevance, setRelevance] = useState('');
   const [sort, setSort] = useState('rating');
   const [findingWa, setFindingWa] = useState(false);
   const [peopleOpen, setPeopleOpen] = useState(false);
@@ -186,7 +196,7 @@ export function AgenciesPage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, sort]);
+  useEffect(() => { setPage(0); }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, relevance, sort]);
 
   // Is WhatsApp outreach wired up? Drives the Send-template button's enabled state.
   useEffect(() => {
@@ -207,13 +217,14 @@ export function AgenciesPage() {
       ...(enrichmentStatus ? { enrichmentStatus } : {}),
       ...(contactable      ? { contactable }      : {}),
       ...(stage            ? { stage }            : {}),
+      ...(relevance        ? { relevance }        : {}),
     });
     api.get<{ agencies: Agency[]; total: number }>(`/agencies?${params.toString()}`)
       .then((d) => { if (!cancelled) { setAgencies(d.agencies); setTotal(d.total); } })
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, sort, page, refreshNonce]);
+  }, [debounced, country, minRating, minReviews, enrichmentStatus, contactable, stage, relevance, sort, page, refreshNonce]);
 
   // ─── Auto-scrape orchestration ─────────────────────────────────────────────
   // On mount, peek scrape status. If a run is active, poll its progress and
@@ -359,6 +370,7 @@ export function AgenciesPage() {
       ...(enrichmentStatus ? { enrichmentStatus }               : {}),
       ...(contactable      ? { contactable }                    : {}),
       ...(stage            ? { stage }                          : {}),
+      ...(relevance        ? { relevance }                      : {}),
     };
   }
 
@@ -548,10 +560,11 @@ export function AgenciesPage() {
         <FilterSelect value={enrichmentStatus} onChange={setEnrichmentStatus} options={ENRICHMENT} />
         <FilterSelect value={contactable}      onChange={setContactable}      options={CONTACTABLE} />
         <FilterSelect value={stage}            onChange={setStage}            options={STAGES} />
+        <FilterSelect value={relevance}        onChange={setRelevance}        options={RELEVANCE} />
         <FilterSelect value={sort}             onChange={setSort}             options={SORT} />
-        {(country || minRating || minReviews || enrichmentStatus || contactable || stage || q) && (
+        {(country || minRating || minReviews || enrichmentStatus || contactable || stage || relevance || q) && (
           <Button variant="ghost" size="sm" onClick={() => {
-            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setStage(''); setQ('');
+            setCountry(''); setMinRating(''); setMinReviews(''); setEnrichmentStatus(''); setContactable(''); setStage(''); setRelevance(''); setQ('');
           }}>
             <Filter className="h-3 w-3" /> Clear
           </Button>
@@ -613,6 +626,14 @@ export function AgenciesPage() {
                           className="border-b border-border last:border-0 hover:bg-muted/40 cursor-pointer whitespace-nowrap">
                         <td className="px-3 py-1.5 max-w-[24rem] truncate">
                           <span className="font-medium text-foreground">{a.name}</span>
+                          {a.relevance === 'review' && (
+                            <span className="ml-1.5 rounded border border-warning/40 bg-warning/10 px-1.5 py-px text-[10.5px] text-warning align-middle"
+                                  title={`Not sure this is a recruitment agency — open it and confirm. ${a.relevance_reason ?? ''}`}>review</span>
+                          )}
+                          {a.relevance === 'not_recruitment' && (
+                            <span className="ml-1.5 rounded border border-border bg-muted px-1.5 py-px text-[10.5px] text-muted-foreground align-middle"
+                                  title={a.relevance_reason ?? ''}>not an agency</span>
+                          )}
                           {(a.contacts_count ?? 0) > 0 && (
                             <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-px text-[10.5px] text-primary align-middle"
                                   title={`${a.contacts_count} named decision-maker${a.contacts_count === 1 ? '' : 's'}${a.mobiles_count ? `, ${a.mobiles_count} with mobile` : ''}`}>

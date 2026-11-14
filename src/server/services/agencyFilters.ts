@@ -15,7 +15,16 @@ export interface AgencyFilter {
   enrichmentStatus?: 'not_enriched' | 'enriched' | 'failed' | 'in_progress';
   contactable?: Contactable;
   stage?: string; // outreach_stage (Phase 4 CRM)
+  /**
+   * Is it really a recruitment agency? (migration 20261114000002)
+   *   undefined / 'visible' → everything except hidden non-agencies (default)
+   *   'recruitment' | 'review' | 'not_recruitment' → just that verdict
+   *   'all' → no relevance filter
+   */
+  relevance?: Relevance;
 }
+
+export type Relevance = 'visible' | 'recruitment' | 'review' | 'not_recruitment' | 'all';
 
 /**
  * Apply the shared filters to a Supabase query builder. Generic so the caller
@@ -25,6 +34,12 @@ export interface AgencyFilter {
 export function applyAgencyFilters<T>(qb: T, f: AgencyFilter): T {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q = qb as any;
+
+  // Hidden non-agencies (travel agencies, shops, ministries…) are excluded from the
+  // list AND from every bulk action unless explicitly asked for.
+  const rel = f.relevance ?? 'visible';
+  if (rel === 'visible') q = q.or('relevance.is.null,relevance.neq.not_recruitment');
+  else if (rel !== 'all') q = q.eq('relevance', rel);
 
   if (f.country) q = q.eq('country_code', f.country.toLowerCase());
   if (f.category) q = q.eq('category', f.category);

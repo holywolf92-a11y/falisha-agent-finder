@@ -23,6 +23,7 @@ const filterSchema = z.object({
   enrichmentStatus: z.enum(['not_enriched', 'enriched', 'failed', 'in_progress']).optional(),
   contactable: z.enum(['has', 'whatsapp', 'mobile', 'landline', 'none']).optional(),
   stage: z.enum(['new', 'contacted', 'replied', 'interested', 'not_interested', 'converted']).optional(),
+  relevance: z.enum(['visible', 'recruitment', 'review', 'not_recruitment', 'all']).optional(),
 });
 
 function fail(res: import('express').Response, err: unknown, fallback: string) {

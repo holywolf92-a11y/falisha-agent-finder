@@ -29,6 +29,9 @@ type AgencyDetail = {
     longitude?: number;
     outreach_stage?: string | null;
     outreach_notes?: string | null;
+    relevance?: 'recruitment' | 'review' | 'not_recruitment' | null;
+    relevance_reason?: string | null;
+    relevance_source?: 'auto' | 'manual' | null;
   };
   emails: Array<{ id: string; email: string; source: string; verified: boolean; confidence: number }>;
   phones: Array<{ id: string; phone: string; phone_type: string; source: string; verified: boolean }>;
@@ -92,6 +95,17 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
       toast.error(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSavingCrm(false);
+    }
+  }
+
+  async function setRelevance(relevance: 'recruitment' | 'not_recruitment') {
+    if (!agencyId) return;
+    try {
+      await api.patch(`/agencies/${agencyId}`, { relevance });
+      toast.success(relevance === 'recruitment' ? 'Marked as a recruitment agency' : 'Hidden — not a recruitment agency');
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
     }
   }
 
@@ -172,6 +186,8 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
               ) : (
                 <>
                   <Header agency={detail.agency} />
+
+                  <RelevanceBar agency={detail.agency} onSet={setRelevance} />
 
                   <Section title="Pipeline">
                     <div className="space-y-2">
@@ -353,6 +369,33 @@ function Header({ agency }: { agency: AgencyDetail['agency'] }) {
         {agency.city && <span>{FLAG[agency.country_code ?? ''] ?? ''} {agency.city}</span>}
         {agency.category && <Badge variant="secondary">{agency.category.replace(/_/g, ' ')}</Badge>}
       </div>
+    </div>
+  );
+}
+
+function RelevanceBar({ agency, onSet }: { agency: AgencyDetail['agency']; onSet: (v: 'recruitment' | 'not_recruitment') => void }) {
+  const r = agency.relevance;
+  const label =
+    r === 'recruitment' ? 'Recruitment agency'
+    : r === 'not_recruitment' ? 'Hidden — not a recruitment agency'
+    : r === 'review' ? 'Needs review — is this a recruitment agency?'
+    : 'Not classified yet';
+  const tone =
+    r === 'recruitment' ? 'border-success/40 bg-success/10'
+    : r === 'not_recruitment' ? 'border-border bg-muted'
+    : 'border-warning/40 bg-warning/10';
+  return (
+    <div className={`rounded-md border px-3 py-2 text-[12.5px] ${tone}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">{label}{agency.relevance_source === 'manual' ? ' (set by you)' : ''}</span>
+        <div className="flex gap-1.5 shrink-0">
+          {r !== 'recruitment' && <Button size="sm" variant="outline" onClick={() => onSet('recruitment')}>It's an agency</Button>}
+          {r !== 'not_recruitment' && <Button size="sm" variant="ghost" onClick={() => onSet('not_recruitment')}>Not an agency</Button>}
+        </div>
+      </div>
+      {agency.relevance_reason && agency.relevance_source !== 'manual' && (
+        <div className="mt-1 text-[11px] text-muted-foreground line-clamp-2" title={agency.relevance_reason}>Why: {agency.relevance_reason}</div>
+      )}
     </div>
   );
 }

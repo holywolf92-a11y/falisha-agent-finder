@@ -123,7 +123,8 @@ export function FindPeopleDialog({
           <DialogTitle>Find decision-makers (Hunter)</DialogTitle>
           <DialogDescription>
             Searches each agency's website domain for named HR, owner and management contacts with verified emails.
-            Uses your current filters. Mobile numbers are found per agency with Lusha, from the agency drawer.
+            Uses your current filters, and only <strong>confirmed</strong> recruitment agencies (not "needs review" or hidden
+            ones) so no credits go to travel agencies or shops. Mobile numbers are found per agency with Lusha, from the agency drawer.
           </DialogDescription>
         </DialogHeader>
 
