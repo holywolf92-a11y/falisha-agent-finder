@@ -11,9 +11,10 @@ import { QuotaWidget, refreshQuota, useQuota } from '@/components/app/QuotaWidge
 import {
   Building2, Search, Star, ChevronLeft, ChevronRight, Sparkles, Loader2, Filter,
   Phone as PhoneIcon, MessageSquare, Globe, Mail, CheckCircle2, Send, Smartphone,
-  Linkedin, Facebook, Instagram, Youtube, Twitter, Music2,
+  Linkedin, Facebook, Instagram, Youtube, Twitter, Music2, UserSearch,
   type LucideIcon,
 } from 'lucide-react';
+import { FindPeopleDialog } from '@/components/app/FindPeopleDialog';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { bestPhone, whatsAppHref, telHref, fmtPhone, type AgencyPhone } from '@/lib/phone';
@@ -57,6 +58,9 @@ type Agency = {
   agency_phones?: AgencyPhone[];
   agency_emails?: { email: string }[];
   agency_socials?: AgencySocial[];
+  // Decision-makers (Hunter / Lusha) — counters maintained by contactsService
+  contacts_count?: number;
+  mobiles_count?: number;
 };
 
 const COUNTRIES = [
@@ -162,6 +166,7 @@ export function AgenciesPage() {
   const [stage, setStage] = useState('');
   const [sort, setSort] = useState('rating');
   const [findingWa, setFindingWa] = useState(false);
+  const [peopleOpen, setPeopleOpen] = useState(false);
   const [waConfig, setWaConfig] = useState<{ configured: boolean; templatesConfigured: boolean; defaultLanguage: string; emailConfigured: boolean; emailFrom: string | null } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [templates, setTemplates] = useState<WaTemplate[]>([]);
@@ -496,6 +501,14 @@ export function AgenciesPage() {
               : <><Smartphone className="h-4 w-4" /> Find WhatsApp</>}
           </Button>
           <Button
+            onClick={() => setPeopleOpen(true)}
+            disabled={total === 0}
+            variant="outline"
+            title="Find named HR / owner contacts with verified emails at the filtered agencies (Hunter.io)"
+          >
+            <UserSearch className="h-4 w-4" /> Find decision-makers
+          </Button>
+          <Button
             onClick={openSendModal}
             disabled={total === 0 || !waConfig?.configured}
             title={waConfig?.configured
@@ -600,6 +613,12 @@ export function AgenciesPage() {
                           className="border-b border-border last:border-0 hover:bg-muted/40 cursor-pointer whitespace-nowrap">
                         <td className="px-3 py-1.5 max-w-[24rem] truncate">
                           <span className="font-medium text-foreground">{a.name}</span>
+                          {(a.contacts_count ?? 0) > 0 && (
+                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-px text-[10.5px] text-primary align-middle"
+                                  title={`${a.contacts_count} named decision-maker${a.contacts_count === 1 ? '' : 's'}${a.mobiles_count ? `, ${a.mobiles_count} with mobile` : ''}`}>
+                              <UserSearch className="h-3 w-3" />{a.contacts_count}{a.mobiles_count ? ` · ${a.mobiles_count}📱` : ''}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-1.5 text-muted-foreground">
                           {a.country_code ? (COUNTRIES.find((c) => c.code === a.country_code)?.label ?? a.country_code.toUpperCase()) : '—'}
@@ -688,6 +707,14 @@ export function AgenciesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Find decision-makers (Hunter) — bulk over the current filter */}
+      <FindPeopleDialog
+        open={peopleOpen}
+        onOpenChange={setPeopleOpen}
+        filter={currentFilter()}
+        onFinished={() => setRefreshNonce((n) => n + 1)}
+      />
 
       {/* Enrich confirmation dialog */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

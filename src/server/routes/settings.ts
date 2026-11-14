@@ -15,6 +15,8 @@ const SETTING_KEYS = [
   'RAPIDAPI_KEY',
   'ADZUNA_APP_ID',
   'ADZUNA_APP_KEY',
+  'HUNTER_API_KEY',
+  'LUSHA_API_KEY',
 ] as const;
 
 const setSchema = z.object({ value: z.string().min(1).max(2048) });

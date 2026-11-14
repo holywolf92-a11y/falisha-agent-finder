@@ -31,6 +31,8 @@ const KEY_LABELS: Record<string, { label: string; placeholder: string; group: st
   RAPIDAPI_KEY:          { label: 'RapidAPI / JSearch key',     placeholder: '9859f3…', group: 'Job boards' },
   ADZUNA_APP_ID:         { label: 'Adzuna — App ID',            placeholder: '6154b3…', group: 'Job boards' },
   ADZUNA_APP_KEY:        { label: 'Adzuna — App Key',           placeholder: 'ad817b…', group: 'Job boards' },
+  HUNTER_API_KEY:        { label: 'Hunter.io — API key (HR & owner emails)', placeholder: 'from hunter.io → API',      group: 'Decision-makers' },
+  LUSHA_API_KEY:         { label: 'Lusha — API key (mobile numbers)',        placeholder: 'from Lusha → API & Integrations', group: 'Decision-makers' },
 };
 
 export function SettingsPage() {

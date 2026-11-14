@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { DecisionMakers } from '@/components/app/DecisionMakers';
 
 type Agency = {
   id: string;
@@ -253,6 +254,10 @@ export function AgencyDrawer({ agencyId, onClose }: { agencyId: string | null; o
                         href={detail.agency.website}
                       />
                     )}
+                  </Section>
+
+                  <Section title="Decision-makers">
+                    <DecisionMakers agencyId={detail.agency.id} hasWebsite={!!detail.agency.website} />
                   </Section>
 
                   {detail.socials.length > 0 && (

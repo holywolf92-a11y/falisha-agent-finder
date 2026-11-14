@@ -16,6 +16,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { scrapeRouter } from './routes/scrape.js';
 import { outreachRouter } from './routes/outreach.js';
 import { inboxRouter } from './routes/inbox.js';
+import { contactsRouter } from './routes/contacts.js';
 import { startSettingsListener } from './services/settingsService.js';
 import { logger } from './logger.js';
 
@@ -55,6 +56,7 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/scrape',   scrapeRouter);
 app.use('/api/outreach', outreachRouter);
 app.use('/api/inbox',    inboxRouter);
+app.use('/api/contacts', contactsRouter);
 
 // Fire-and-forget: start the Supabase realtime listener for cross-process
 // settings invalidation. Non-fatal if it fails (settings still work via TTL).

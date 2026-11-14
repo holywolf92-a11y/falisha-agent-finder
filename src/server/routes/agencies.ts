@@ -62,7 +62,25 @@ agenciesRouter.get('/', async (req, res) => {
 
   const { data, error, count } = await qb;
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ agencies: data ?? [], total: count ?? 0, page, pageSize });
+
+  // Decision-maker counters (migration 20261114000001). Fetched separately so the
+  // list keeps working if that migration hasn't been run yet.
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length) {
+    const { data: counts, error: cErr } = await db()
+      .from('agencies')
+      .select('id, contacts_count, mobiles_count')
+      .in('id', rows.map((r) => String(r.id)));
+    if (!cErr && counts) {
+      const byId = new Map(counts.map((c) => [String(c.id), c]));
+      for (const r of rows) {
+        const c = byId.get(String(r.id));
+        r.contacts_count = c?.contacts_count ?? 0;
+        r.mobiles_count = c?.mobiles_count ?? 0;
+      }
+    }
+  }
+  return res.json({ agencies: rows, total: count ?? 0, page, pageSize });
 });
 
 agenciesRouter.get('/:id', async (req, res) => {
